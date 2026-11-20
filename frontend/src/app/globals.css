@@ -1,0 +1,65 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #08060D;
+  --foreground: #FFFFFF;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
+  overflow-x: hidden;
+}
+
+/* Custom glowing purple scrollbar */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: #100B18;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #30203F;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #8B5CF6;
+  box-shadow: 0 0 10px #A855F7;
+}
+
+/* Glassmorphism utility */
+.glass-panel {
+  background: rgba(25, 18, 37, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(168, 85, 247, 0.2);
+}
+
+.glass-panel-glow {
+  background: rgba(25, 18, 37, 0.85);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(168, 85, 247, 0.4);
+  box-shadow: 0 0 20px -5px rgba(168, 85, 247, 0.3);
+}
+
+/* Glowing text */
+.text-glow {
+  text-shadow: 0 0 15px rgba(168, 85, 247, 0.6);
+}
+
+/* Smooth neon border hover */
+.border-glow-hover {
+  transition: all 0.25s ease-in-out;
+}
+
+.border-glow-hover:hover {
+  border-color: #A855F7;
+  box-shadow: 0 0 18px rgba(168, 85, 247, 0.35);
+}

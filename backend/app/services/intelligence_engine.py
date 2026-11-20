@@ -97,9 +97,9 @@ class EduPathIntelligenceEngine:
             tp_stmt = select(TopicPerformance).where(
                 TopicPerformance.user_id == user_id,
                 TopicPerformance.topic_id == topic_id
-            )
+            ).limit(1)
             tp_res = await session.execute(tp_stmt)
-            tp = tp_res.scalar_one_or_none()
+            tp = tp_res.scalars().first()
 
             correct_count = sum(1 for ea in evaluated_answers if ea["is_correct"])
             incorrect_count = len(evaluated_answers) - correct_count
@@ -186,13 +186,18 @@ class EduPathIntelligenceEngine:
         map_res = await session.execute(map_stmt)
         mappings = map_res.scalars().all()
 
+        seen_skill_ids = set()
         for m in mappings:
+            if m.skill_id in seen_skill_ids:
+                continue
+            seen_skill_ids.add(m.skill_id)
+
             us_stmt = select(UserSkill).where(
                 UserSkill.user_id == user_id,
                 UserSkill.skill_id == m.skill_id
-            )
+            ).limit(1)
             us_res = await session.execute(us_stmt)
-            user_skill = us_res.scalar_one_or_none()
+            user_skill = us_res.scalars().first()
 
             if not user_skill:
                 user_skill = UserSkill(
@@ -278,9 +283,9 @@ class EduPathIntelligenceEngine:
                     SkillGap.user_id == user_id,
                     SkillGap.career_role_id == role.id,
                     SkillGap.skill_id == skill_id
-                )
+                ).limit(1)
                 sg_res = await session.execute(sg_stmt)
-                sg = sg_res.scalar_one_or_none()
+                sg = sg_res.scalars().first()
 
                 if not sg:
                     sg = SkillGap(
@@ -309,9 +314,9 @@ class EduPathIntelligenceEngine:
             rec_stmt = select(CareerRecommendation).where(
                 CareerRecommendation.user_id == user_id,
                 CareerRecommendation.career_role_id == role.id
-            )
+            ).limit(1)
             rec_res = await session.execute(rec_stmt)
-            rec = rec_res.scalar_one_or_none()
+            rec = rec_res.scalars().first()
 
             if not rec:
                 rec = CareerRecommendation(

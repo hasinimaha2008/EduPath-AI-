@@ -1,6 +1,7 @@
 import React from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { Navbar } from "@/components/Navbar";
+import { FloatingVoiceAgent } from "@/components/FloatingVoiceAgent";
 
 export default function DashboardLayout({
   children,
@@ -16,6 +17,7 @@ export default function DashboardLayout({
           {children}
         </main>
       </div>
+      <FloatingVoiceAgent />
     </div>
   );
 }

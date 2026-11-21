@@ -31,6 +31,11 @@ class TopicBase(BaseModel):
     name: str
     description: Optional[str] = None
     order_index: int = 0
+    module_name: Optional[str] = "Module 1: Foundations"
+    is_emerging: bool = False
+    source_reference: Optional[str] = None
+    last_updated_date: Optional[str] = None
+    subtopics: List[str] = []
 
 class TopicResponse(TopicBase):
     id: str
@@ -42,6 +47,8 @@ class SubjectBase(BaseModel):
     name: str
     code: Optional[str] = None
     description: Optional[str] = None
+    category: Optional[str] = "Computer Science"
+    icon_name: Optional[str] = "BookOpen"
 
 class SubjectResponse(SubjectBase):
     id: str
@@ -156,6 +163,8 @@ class QuestionResponse(BaseModel):
     question_type: str
     options: Optional[List[str]] = None
     points: int = 1
+    code_snippet: Optional[str] = None
+    test_cases: Optional[List[str]] = None
     # Notice: correct_answer and explanation are omitted for active quiz taking!
 
     model_config = ConfigDict(from_attributes=True)
@@ -168,8 +177,9 @@ class QuizCreateRequest(BaseModel):
     title: Optional[str] = None
     subject_id: Optional[str] = None
     topic_id: Optional[str] = None
+    subtopic: Optional[str] = None
     document_id: Optional[str] = None
-    difficulty: str = "medium"  # easy, medium, hard
+    difficulty: str = "medium"  # beginner, intermediate, advanced, easy, medium, hard
     question_count: int = 5
     question_types: List[str] = ["mcq"]
 

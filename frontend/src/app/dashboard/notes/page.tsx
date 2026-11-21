@@ -36,6 +36,7 @@ export default function SmartNotesPage() {
   const [selectedTypeFilter, setSelectedTypeFilter] = useState<string>("all");
   
   // Generator State
+  const [selectedSubjectId, setSelectedSubjectId] = useState("");
   const [topicName, setTopicName] = useState("");
   const [selectedDocId, setSelectedDocId] = useState("");
   const [selectedNoteType, setSelectedNoteType] = useState("detailed");
@@ -167,18 +168,54 @@ export default function SmartNotesPage() {
       {/* Generator Form Card */}
       <GlowCard className="p-5">
         <form onSubmit={handleGenerate} className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+              <label className="block text-[11px] font-semibold text-[#A1A1AA] uppercase tracking-wider mb-1.5">
+                Select Subject (16 Available)
+              </label>
+              <select
+                value={selectedSubjectId}
+                onChange={(e) => {
+                  setSelectedSubjectId(e.target.value);
+                  setTopicName("");
+                }}
+                className="w-full px-3 py-2 rounded-lg bg-[#100B18] border border-[#30203F] text-xs text-white focus:outline-none focus:border-[#A855F7] transition-all"
+              >
+                <option value="">Choose Subject...</option>
+                {subjects.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} ({s.code || "CS"})
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <div>
               <label className="block text-[11px] font-semibold text-[#A1A1AA] uppercase tracking-wider mb-1.5">
                 Topic or Academic Concept
               </label>
-              <input
-                type="text"
-                value={topicName}
-                onChange={(e) => setTopicName(e.target.value)}
-                placeholder="e.g. Database Normalization & BCNF"
-                className="w-full px-3 py-2 rounded-lg bg-[#100B18] border border-[#30203F] text-xs text-white focus:outline-none focus:border-[#A855F7] transition-all"
-              />
+              {selectedSubjectId && (subjects.find((s) => s.id === selectedSubjectId)?.topics.length || 0) > 0 ? (
+                <select
+                  value={topicName}
+                  onChange={(e) => setTopicName(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-[#100B18] border border-[#30203F] text-xs text-white focus:outline-none focus:border-[#A855F7] transition-all"
+                >
+                  <option value="">Select Topic from Subject...</option>
+                  {subjects.find((s) => s.id === selectedSubjectId)?.topics.map((t) => (
+                    <option key={t.id} value={t.name}>
+                      {t.is_emerging ? "⚡ [Emerging] " : ""}{t.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={topicName}
+                  onChange={(e) => setTopicName(e.target.value)}
+                  placeholder="e.g. Asymptotic Analysis & Big-O"
+                  className="w-full px-3 py-2 rounded-lg bg-[#100B18] border border-[#30203F] text-xs text-white focus:outline-none focus:border-[#A855F7] transition-all"
+                />
+              )}
             </div>
 
             <div>

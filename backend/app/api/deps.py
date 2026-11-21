@@ -27,13 +27,6 @@ async def get_current_user(
             if user:
                 return user
 
-    # Fallback to demo user if no valid token provided
-    stmt = select(User).where(User.email == "demo@edupath.ai")
-    res = await session.execute(stmt)
-    demo_user = res.scalar_one_or_none()
-    if demo_user:
-        return demo_user
-
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",

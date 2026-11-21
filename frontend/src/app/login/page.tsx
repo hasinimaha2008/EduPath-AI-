@@ -6,9 +6,11 @@ import { useRouter } from "next/navigation";
 import { GraduationCap, ArrowRight, Lock, Mail, Sparkles, AlertCircle } from "lucide-react";
 import { GlowCard } from "@/components/GlowCard";
 import { api } from "@/lib/api";
+import { useAuth } from "@/lib/AuthContext";
 
 export default function LoginPage() {
   const router = useRouter();
+  const { refreshUser } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -22,6 +24,7 @@ export default function LoginPage() {
 
     try {
       await api.login({ email, password });
+      await refreshUser();
       router.push("/dashboard");
     } catch (err: any) {
       setError(err.message || "Failed to sign in. Please check your credentials.");
@@ -35,6 +38,7 @@ export default function LoginPage() {
     setDemoLoading(true);
     try {
       await api.demoLogin();
+      await refreshUser();
       router.push("/dashboard");
     } catch (err: any) {
       setError(err.message || "Failed to access demo.");

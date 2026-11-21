@@ -17,6 +17,8 @@ export interface Subject {
   name: string;
   code?: string;
   description?: string;
+  category?: string;
+  icon_name?: string;
   topics: Topic[];
 }
 
@@ -26,6 +28,11 @@ export interface Topic {
   name: string;
   description?: string;
   order_index: number;
+  module_name?: string;
+  subtopics?: string[];
+  is_emerging?: boolean;
+  source_reference?: string;
+  last_updated_date?: string;
 }
 
 export interface DocumentItem {
@@ -85,15 +92,17 @@ export interface Question {
   id: string;
   quiz_id: string;
   question_text: string;
-  question_type: string;
+  question_type: "mcq" | "multiple_select" | "short_answer" | "long_answer" | "technical_interview" | "programming" | "scenario_based" | "application_oriented" | string;
   options?: string[];
   points: number;
+  code_snippet?: string;
+  test_cases?: string[];
 }
 
 export interface Quiz {
   id: string;
   title: string;
-  difficulty: "easy" | "medium" | "hard";
+  difficulty: "beginner" | "intermediate" | "advanced" | "easy" | "medium" | "hard" | string;
   total_questions: number;
   time_limit_mins: number;
   subject_id?: string;
@@ -264,3 +273,195 @@ export interface StudyPlan {
   tasks: StudyTask[];
   created_at: string;
 }
+
+// --- Conversational AI Voice Agent Interfaces ---
+export interface VoiceInfo {
+  id: string;
+  name: string;
+  language: string;
+  gender: string;
+}
+
+export interface VoiceChatTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface VoiceChatRequest {
+  message: string;
+  conversation_id?: string;
+  subject_id?: string;
+  language: string;
+  voice?: string;
+  synthesize_audio?: boolean;
+  history?: VoiceChatTurn[];
+}
+
+export interface VoiceChatResponse {
+  conversation_id: string;
+  reply_text: string;
+  language: string;
+  voice: string;
+  audio_base64?: string;
+  audio_stream_url: string;
+}
+
+export interface LanguageInfo {
+  code: string;
+  name: string;
+  native: string;
+}
+
+// --- EduPath AI 2.0 Extensions ---
+
+export interface LearningProfile {
+  id: string;
+  user_id: string;
+  preferred_language: string;
+  explanation_style: string;
+  daily_goal_minutes: number;
+  target_career_id?: string;
+  target_career_title?: string;
+  learning_preferences: Record<string, any>;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface QuizMistakeItem {
+  id: string;
+  topic_name: string;
+  question_text: string;
+  error_category: "conceptual_misunderstanding" | "incorrect_application" | "calculation_error" | "misinterpretation" | "knowledge_gap" | "unclassified";
+  user_response: string;
+  correct_answer: string;
+  explanation: string;
+  suggested_fix?: string;
+  repeated_count: number;
+  created_at: string;
+}
+
+export interface MistakeInsights {
+  total_mistakes: number;
+  repeated_mistakes_count: number;
+  improvement_rate: number;
+  category_distribution: { category: string; label: string; count: number }[];
+  repeated_mistakes: QuizMistakeItem[];
+  recent_mistakes: QuizMistakeItem[];
+  actionable_advice: string;
+}
+
+export interface NotificationItem {
+  id: string;
+  title: string;
+  message: string;
+  notification_type: "revision_due" | "task_reminder" | "weak_topic_alert" | "career_milestone" | "quiz_feedback";
+  is_read: boolean;
+  action_url?: string;
+  created_at: string;
+}
+
+export interface NotificationListResponse {
+  unread_count: number;
+  notifications: NotificationItem[];
+}
+
+export interface TopicWorkspaceData {
+  topic: {
+    id: string;
+    name: string;
+    description?: string;
+    module_name?: string;
+    subtopics?: string[];
+    is_emerging?: boolean;
+    source_reference?: string;
+    subject_id?: string;
+    subject_name?: string;
+  };
+  performance: {
+    total_attempts: number;
+    correct_answers: number;
+    incorrect_answers: number;
+    accuracy_percentage: number;
+    mastery_status: string;
+    last_practiced_at?: string;
+  };
+  notes: {
+    id: string;
+    title: string;
+    note_type: string;
+    content_preview: string;
+    created_at: string;
+  }[];
+  documents: {
+    id: string;
+    title: string;
+    status: string;
+    file_type: string;
+    created_at: string;
+  }[];
+  quiz_attempts: {
+    attempt_id: string;
+    quiz_title: string;
+    score: number;
+    max_score: number;
+    percentage: number;
+    completed_at: string;
+  }[];
+  revision_tasks: {
+    id: string;
+    title: string;
+    description: string;
+    scheduled_date: string;
+    is_due: boolean;
+    priority: string;
+  }[];
+}
+
+export interface ExplanationModeResponse {
+  mode: string;
+  mode_title: string;
+  concept: string;
+  topic_name: string;
+  content: string;
+}
+
+export interface CareerProjectItem {
+  id: string;
+  title: string;
+  objective: string;
+  difficulty: "Beginner" | "Intermediate" | "Advanced";
+  required_skills: string[];
+  tools: string[];
+  steps: string[];
+  expected_outcome: string;
+  competency_focus: string;
+}
+
+export interface CareerPathwayItem {
+  id: string;
+  target_role_id: string;
+  target_role_title: string;
+  transition_difficulty: string;
+  bridge_skills: string[];
+  guidance: string;
+}
+
+export interface CareerComparisonRole {
+  id: string;
+  title: string;
+  slug: string;
+  salary_range: string;
+  industry_demand: string;
+  icon_name: string;
+  readiness_score: number;
+  demonstrated_skills: { skill: string; proficiency: number; target: number }[];
+  in_progress_skills: { skill: string; proficiency: number; target: number }[];
+  missing_skills: { skill: string; proficiency: number; target: number }[];
+}
+
+export interface CareerComparisonResponse {
+  compared_roles: CareerComparisonRole[];
+  shared_skills: string[];
+  comparison_count: number;
+}
+

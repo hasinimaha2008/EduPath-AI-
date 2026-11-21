@@ -12,6 +12,7 @@ from app.schemas.schemas import (
 )
 from app.services.gemini_service import gemini_service
 from app.services.intelligence_engine import intelligence_engine
+from app.services.personalized_learning_service import personalized_learning_service
 
 router = APIRouter(prefix="/quizzes", tags=["AI Quiz Generator"])
 
@@ -53,7 +54,8 @@ async def generate_quiz(
         topic_name=topic_title,
         difficulty=req.difficulty,
         question_count=req.question_count,
-        question_types=req.question_types
+        question_types=req.question_types,
+        subtopic=req.subtopic
     )
 
     quiz = Quiz(
@@ -71,6 +73,7 @@ async def generate_quiz(
 
     question_objects = []
     for q_item in generated_q_list:
+        test_cases_val = json.dumps(q_item.get("test_cases", [])) if q_item.get("test_cases") else None
         q_obj = Question(
             quiz_id=quiz.id,
             question_text=q_item.get("question_text", "Academic Concept Question"),
@@ -78,7 +81,9 @@ async def generate_quiz(
             options_json=json.dumps(q_item.get("options", [])) if q_item.get("options") else None,
             correct_answer=q_item.get("correct_answer", "").strip(),
             explanation=q_item.get("explanation", ""),
-            points=q_item.get("points", 1)
+            points=q_item.get("points", 1),
+            code_snippet=q_item.get("code_snippet"),
+            test_cases_json=test_cases_val
         )
         session.add(q_obj)
         question_objects.append(q_obj)
@@ -97,7 +102,9 @@ async def generate_quiz(
                 question_text=q.question_text,
                 question_type=q.question_type,
                 options=opts,
-                points=q.points
+                points=q.points,
+                code_snippet=q.code_snippet,
+                test_cases=q.test_cases
             )
         )
 
@@ -138,7 +145,9 @@ async def get_quiz(
             question_text=q.question_text,
             question_type=q.question_type,
             options=json.loads(q.options_json) if q.options_json else None,
-            points=q.points
+            points=q.points,
+            code_snippet=q.code_snippet,
+            test_cases=q.test_cases
         )
         for q in questions
     ]
@@ -203,3 +212,91 @@ async def get_quiz_history(
             )
         )
     return history
+
+@router.post("/generate-adaptive", response_model=QuizResponse)
+async def generate_adaptive_quiz(
+    req: QuizCreateRequest,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db)
+):
+    """
+    Generates an adaptive quiz specifically targeting the student's historical mistakes,
+    error patterns, and demonstrated difficulty gaps (Upgrade 2).
+    """
+    if not req.topic_id:
+        raise HTTPException(status_code=400, detail="topic_id is required for adaptive quiz generation.")
+
+    adaptive_result = await personalized_learning_service.generate_adaptive_quiz(
+        session=session,
+        user_id=current_user.id,
+        topic_id=req.topic_id,
+        difficulty=req.difficulty or "medium",
+        question_count=req.question_count or 5
+    )
+
+    generated_q_list = adaptive_result["questions"]
+    topic_name = adaptive_result["topic_name"]
+
+    # Fetch subject_id from Topic
+    t_stmt = select(Topic.subject_id).where(Topic.id == req.topic_id)
+    t_res = await session.execute(t_stmt)
+    subj_id = t_res.scalar_one_or_none()
+
+    quiz = Quiz(
+        user_id=current_user.id,
+        subject_id=subj_id,
+        topic_id=req.topic_id,
+        title=f"{topic_name} – Adaptive Mastery Assessment",
+        difficulty=adaptive_result["calibrated_difficulty"],
+        total_questions=len(generated_q_list),
+        time_limit_mins=max(5, len(generated_q_list) * 2)
+    )
+    session.add(quiz)
+    await session.flush()
+
+    question_objects = []
+    for q_item in generated_q_list:
+        test_cases_val = json.dumps(q_item.get("test_cases", [])) if q_item.get("test_cases") else None
+        q_obj = Question(
+            quiz_id=quiz.id,
+            question_text=q_item.get("question_text", "Adaptive Evaluation Question"),
+            question_type=q_item.get("question_type", "mcq"),
+            options_json=json.dumps(q_item.get("options", [])) if q_item.get("options") else None,
+            correct_answer=q_item.get("correct_answer", "").strip(),
+            explanation=q_item.get("explanation", ""),
+            points=q_item.get("points", 1),
+            code_snippet=q_item.get("code_snippet"),
+            test_cases_json=test_cases_val
+        )
+        session.add(q_obj)
+        question_objects.append(q_obj)
+
+    await session.commit()
+    await session.refresh(quiz)
+
+    # Return questions with hidden correct answers
+    clean_questions = []
+    for q in question_objects:
+        opts = json.loads(q.options_json) if q.options_json else None
+        clean_questions.append(
+            QuestionResponse(
+                id=q.id,
+                quiz_id=quiz.id,
+                question_text=q.question_text,
+                question_type=q.question_type or "mcq",
+                options=opts,
+                points=q.points,
+                code_snippet=q.code_snippet
+            )
+        )
+
+    return QuizResponse(
+        id=quiz.id,
+        title=quiz.title,
+        difficulty=quiz.difficulty,
+        total_questions=quiz.total_questions,
+        time_limit_mins=quiz.time_limit_mins,
+        questions=clean_questions,
+        created_at=quiz.created_at
+    )
+

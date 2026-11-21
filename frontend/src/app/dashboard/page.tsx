@@ -26,6 +26,7 @@ import {
 } from "recharts";
 import { GlowCard } from "@/components/GlowCard";
 import { api } from "@/lib/api";
+import { useAuth } from "@/lib/AuthContext";
 import {
   AnalyticsDashboard,
   CareerRecommendation,
@@ -34,6 +35,7 @@ import {
 } from "@/lib/types";
 
 export default function DashboardOverviewPage() {
+  const { user } = useAuth();
   const [analytics, setAnalytics] = useState<AnalyticsDashboard | null>(null);
   const [recommendations, setRecommendations] = useState<CareerRecommendation[]>([]);
   const [studyPlan, setStudyPlan] = useState<StudyPlan | null>(null);
@@ -70,9 +72,10 @@ export default function DashboardOverviewPage() {
             <Sparkles className="w-3.5 h-3.5" /> EduPath Intelligence Engine Connected
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-            Learner Workspace & Career Ecosystem
+            {user?.full_name ? `Welcome back, ${user.full_name}!` : "Learner Workspace & Career Ecosystem"}
           </h1>
           <p className="text-xs sm:text-sm text-[#A1A1AA] mt-1">
+            {user?.email ? <span className="text-[#C084FC] font-medium">{user.email} &bull; </span> : null}
             Academic assessment evidence is dynamically mapping to your career competencies.
           </p>
         </div>

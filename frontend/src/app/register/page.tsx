@@ -6,9 +6,11 @@ import { useRouter } from "next/navigation";
 import { GraduationCap, ArrowRight, Lock, Mail, User as UserIcon, AlertCircle } from "lucide-react";
 import { GlowCard } from "@/components/GlowCard";
 import { api } from "@/lib/api";
+import { useAuth } from "@/lib/AuthContext";
 
 export default function RegisterPage() {
   const router = useRouter();
+  const { refreshUser } = useAuth();
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -22,6 +24,7 @@ export default function RegisterPage() {
 
     try {
       await api.register({ full_name: fullName, email, password });
+      await refreshUser();
       router.push("/dashboard");
     } catch (err: any) {
       setError(err.message || "Failed to create account. Please try again.");
@@ -63,7 +66,7 @@ export default function RegisterPage() {
                   required
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
-                  placeholder="Alex Mercer"
+                  placeholder="e.g. Sarah Connor"
                   className="w-full pl-10 pr-4 py-2.5 rounded-lg bg-[#100B18] border border-[#30203F] text-white placeholder-[#A1A1AA]/50 text-sm focus:outline-none focus:border-[#A855F7] focus:ring-1 focus:ring-[#A855F7] transition-all"
                 />
               </div>

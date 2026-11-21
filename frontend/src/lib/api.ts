@@ -2,7 +2,11 @@ import {
   AuthResponse, User, DocumentItem, ChatMessage, Conversation,
   Note, Quiz, QuizResult, QuizAttemptHistory, TopicPerformance,
   AnalyticsDashboard, CareerRole, Skill, SubjectSkillMapping,
-  CareerRecommendation, SkillGapResponse, CareerRoadmap, StudyPlan, Subject
+  CareerRecommendation, SkillGapResponse, CareerRoadmap, StudyPlan, Subject, Topic,
+  VoiceInfo, VoiceChatRequest, VoiceChatResponse,
+  LanguageInfo, LearningProfile, MistakeInsights, NotificationListResponse,
+  TopicWorkspaceData, ExplanationModeResponse, CareerComparisonResponse,
+  CareerProjectItem, CareerPathwayItem
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
@@ -27,6 +31,33 @@ class ApiClient {
     }
   }
 
+  public setUser(user: User) {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("edupath_user", JSON.stringify(user));
+    }
+  }
+
+  public getUser(): User | null {
+    if (typeof window !== "undefined") {
+      const u = localStorage.getItem("edupath_user");
+      if (u) {
+        try {
+          return JSON.parse(u);
+        } catch {
+          // ignore parsing error
+        }
+      }
+    }
+    return null;
+  }
+
+  public clearAuth() {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("edupath_token");
+      localStorage.removeItem("edupath_user");
+    }
+  }
+
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const token = this.getToken();
     const headers: Record<string, string> = {
@@ -44,6 +75,12 @@ class ApiClient {
     });
 
     if (!res.ok) {
+      if (res.status === 401 && typeof window !== "undefined" && !endpoint.includes("/auth/login") && !endpoint.includes("/auth/register") && !endpoint.includes("/auth/demo-login")) {
+        this.clearAuth();
+        if (window.location.pathname.startsWith("/dashboard")) {
+          window.location.href = "/login";
+        }
+      }
       let errorMsg = `HTTP Error ${res.status}`;
       try {
         const errorJson = await res.json();
@@ -64,6 +101,7 @@ class ApiClient {
       body: JSON.stringify(data),
     });
     this.setToken(res.access_token);
+    this.setUser(res.user);
     return res;
   }
 
@@ -73,12 +111,14 @@ class ApiClient {
       body: JSON.stringify(data),
     });
     this.setToken(res.access_token);
+    this.setUser(res.user);
     return res;
   }
 
   async demoLogin(): Promise<AuthResponse> {
     const res = await this.request<AuthResponse>("/api/auth/demo-login");
     this.setToken(res.access_token);
+    this.setUser(res.user);
     return res;
   }
 
@@ -109,12 +149,12 @@ class ApiClient {
     });
   }
 
-  // Assistant
   async askAssistant(data: {
     question: string;
     conversation_id?: string;
     document_id?: string;
     subject_id?: string;
+    language?: string;
   }): Promise<{
     conversation_id: string;
     user_message: ChatMessage;
@@ -123,6 +163,121 @@ class ApiClient {
     return this.request("/api/assistant/ask", {
       method: "POST",
       body: JSON.stringify(data),
+    });
+  }
+
+  async regenerateAssistant(conversationId: string): Promise<{
+    conversation_id: string;
+    assistant_message: ChatMessage;
+  }> {
+    return this.request("/api/assistant/regenerate", {
+      method: "POST",
+      body: JSON.stringify({ conversation_id: conversationId }),
+    });
+  }
+
+  async chatStreamAssistant(
+    data: {
+      question: string;
+      conversation_id?: string;
+      document_id?: string;
+      subject_id?: string;
+      language?: string;
+    },
+    callbacks: {
+      onMeta?: (meta: { conversation_id: string; title: string; user_message: ChatMessage; citations?: any[] }) => void;
+      onToken?: (token: string) => void;
+      onDone?: (doneData: { assistant_message: ChatMessage }) => void;
+      onError?: (err: string) => void;
+    },
+    signal?: AbortSignal
+  ): Promise<void> {
+    const token = this.getToken();
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
+
+    const res = await fetch(`${API_BASE}/api/assistant/chat-stream`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(data),
+      signal,
+    });
+
+    if (!res.ok) {
+      let errText = `Stream error ${res.status}`;
+      try {
+        const j = await res.json();
+        errText = j.detail || errText;
+      } catch {}
+      if (callbacks.onError) callbacks.onError(errText);
+      throw new Error(errText);
+    }
+
+    if (!res.body) throw new Error("No response body available for streaming.");
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith("data: ")) {
+            const rawJson = trimmed.slice(6);
+            try {
+              const parsed = JSON.parse(rawJson);
+              if (parsed.type === "meta" && callbacks.onMeta) {
+                callbacks.onMeta(parsed);
+              } else if (parsed.type === "token" && callbacks.onToken) {
+                callbacks.onToken(parsed.content);
+              } else if (parsed.type === "done" && callbacks.onDone) {
+                callbacks.onDone(parsed);
+              }
+            } catch (pErr) {
+              console.warn("Failed to parse SSE chunk:", rawJson);
+            }
+          }
+        }
+      }
+    } catch (readErr: any) {
+      if (readErr.name === "AbortError") {
+        console.log("Chat stream was aborted by user.");
+      } else {
+        if (callbacks.onError) callbacks.onError(readErr.message);
+        throw readErr;
+      }
+    }
+  }
+
+  async getAssistantStatus(): Promise<{
+    is_configured: boolean;
+    model_name: string;
+    provider: string;
+    streaming_supported: boolean;
+    multilingual_supported: string[];
+  }> {
+    return this.request("/api/assistant/status");
+  }
+
+  async configureAssistantKey(apiKey: string): Promise<{
+    success: boolean;
+    configured: boolean;
+    model: string;
+    message: string;
+  }> {
+    return this.request("/api/assistant/configure-key", {
+      method: "POST",
+      body: JSON.stringify({ api_key: apiKey }),
     });
   }
 
@@ -159,10 +314,13 @@ class ApiClient {
   // Quizzes
   async generateQuiz(data: {
     title?: string;
+    subject_id?: string;
     topic_id?: string;
+    subtopic?: string;
     document_id?: string;
     difficulty?: string;
     question_count?: number;
+    question_types?: string[];
   }): Promise<Quiz> {
     return this.request<Quiz>("/api/quizzes/generate", {
       method: "POST",
@@ -203,8 +361,18 @@ class ApiClient {
     return this.request<CareerRecommendation[]>("/api/careers/recommendations");
   }
 
-  async getSubjects(): Promise<Subject[]> {
-    return this.request<Subject[]>("/api/skills/subjects");
+  async getSubjects(category?: string): Promise<Subject[]> {
+    const query = category ? `?category=${encodeURIComponent(category)}` : "";
+    return this.request<Subject[]>(`/api/subjects${query}`);
+  }
+
+  async getSubjectDetail(subjectId: string): Promise<Subject> {
+    return this.request<Subject>(`/api/subjects/${subjectId}`);
+  }
+
+  async getSubjectTopics(subjectId: string, onlyEmerging?: boolean): Promise<Topic[]> {
+    const query = onlyEmerging !== undefined ? `?only_emerging=${onlyEmerging}` : "";
+    return this.request<Topic[]>(`/api/subjects/${subjectId}/topics${query}`);
   }
 
   async getSkillsCatalog(): Promise<Skill[]> {
@@ -282,6 +450,121 @@ class ApiClient {
       method: "DELETE",
     });
   }
+
+  // Conversational AI Voice Agent
+  async voiceChat(req: VoiceChatRequest): Promise<VoiceChatResponse> {
+    return this.request<VoiceChatResponse>("/api/voice/chat", {
+      method: "POST",
+      body: JSON.stringify(req),
+    });
+  }
+
+  async getVoices(): Promise<VoiceInfo[]> {
+    return this.request<VoiceInfo[]>("/api/voice/voices");
+  }
+
+  async getLanguages(): Promise<LanguageInfo[]> {
+    return this.request<LanguageInfo[]>("/api/voice/languages");
+  }
+
+  // --- AI Learning Insights & Mistake Analysis (Upgrade 5) ---
+  async getMistakes(): Promise<MistakeInsights> {
+    return this.request<MistakeInsights>("/api/insights/mistakes");
+  }
+
+  async getInsightsSummary(): Promise<any> {
+    return this.request<any>("/api/insights/summary");
+  }
+
+  // --- Interactive Learning Workspace (Upgrade 7) ---
+  async getTopicWorkspace(topicId: string): Promise<TopicWorkspaceData> {
+    return this.request<TopicWorkspaceData>(`/api/workspace/topic/${topicId}`);
+  }
+
+  async explainConcept(data: {
+    topic_name: string;
+    concept_name?: string;
+    mode?: string;
+    subject_name?: string;
+    context_notes?: string;
+  }): Promise<ExplanationModeResponse> {
+    return this.request<ExplanationModeResponse>("/api/workspace/explain", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  // --- Smart Notifications (Upgrade 8) ---
+  async listNotifications(): Promise<NotificationListResponse> {
+    return this.request<NotificationListResponse>("/api/notifications");
+  }
+
+  async markNotificationRead(id: string): Promise<any> {
+    return this.request<any>(`/api/notifications/${id}/read`, {
+      method: "PUT",
+    });
+  }
+
+  async markAllNotificationsRead(): Promise<any> {
+    return this.request<any>("/api/notifications/read-all", {
+      method: "PUT",
+    });
+  }
+
+  async triggerReminders(): Promise<any> {
+    return this.request<any>("/api/notifications/trigger-reminders", {
+      method: "POST",
+    });
+  }
+
+  // --- Student Learning Profile (Upgrade 2) ---
+  async getLearningProfile(): Promise<LearningProfile> {
+    return this.request<LearningProfile>("/api/profile/learning");
+  }
+
+  async updateLearningProfile(data: Partial<LearningProfile>): Promise<LearningProfile> {
+    return this.request<LearningProfile>("/api/profile/learning", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  }
+
+  // --- Career Intelligence 2.0 (Upgrade 6) ---
+  async compareCareers(roleIds: string[]): Promise<CareerComparisonResponse> {
+    return this.request<CareerComparisonResponse>(`/api/careers/compare?role_ids=${roleIds.join(",")}`);
+  }
+
+  async getCareerProjects(careerId: string): Promise<CareerProjectItem[]> {
+    return this.request<CareerProjectItem[]>(`/api/careers/${careerId}/projects`);
+  }
+
+  async getCareerPathways(careerId: string): Promise<{ outbound_pathways: CareerPathwayItem[] }> {
+    return this.request<{ outbound_pathways: CareerPathwayItem[] }>(`/api/careers/${careerId}/pathways`);
+  }
+
+  // --- Adaptive Quiz Generation (Upgrade 2) ---
+  async generateAdaptiveQuiz(data: { topic_id: string; difficulty?: string; question_count?: number }): Promise<Quiz> {
+    return this.request<Quiz>("/api/quizzes/generate-adaptive", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  // --- Document Intelligence 2.0 (Upgrade 4) ---
+  async getDocumentSummary(documentId: string): Promise<any> {
+    return this.request<any>(`/api/documents/${documentId}/summary`);
+  }
+
+  async getDocumentConcepts(documentId: string): Promise<any> {
+    return this.request<any>(`/api/documents/${documentId}/concepts`);
+  }
+
+  async generateDocumentQuestions(documentId: string, count: number = 5): Promise<any> {
+    return this.request<any>(`/api/documents/${documentId}/generate-questions?count=${count}`, {
+      method: "POST",
+    });
+  }
 }
 
 export const api = new ApiClient();
+

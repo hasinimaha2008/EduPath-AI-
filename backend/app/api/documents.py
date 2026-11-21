@@ -99,6 +99,19 @@ async def upload_document(
 
         doc.chunk_count = len(created_chunks)
         doc.status = "ready"
+        session.add(doc)
+
+        # Trigger Workflow C: Notification that document intelligence is ready
+        from app.models.models import Notification
+        notif = Notification(
+            user_id=current_user.id,
+            title=f"Document Ready: {doc.title}",
+            message=f"'{doc.title}' ({len(created_chunks)} chunks) is processed and indexed with hybrid search. Summary and self-assessment are ready.",
+            notification_type="task_reminder",
+            action_url="/dashboard/documents"
+        )
+        session.add(notif)
+
         await session.commit()
         await session.refresh(doc)
 
@@ -154,3 +167,56 @@ async def delete_document(
     await session.delete(doc)
     await session.commit()
     return {"message": "Document successfully deleted."}
+
+@router.get("/{document_id}/summary")
+async def get_document_summary(
+    document_id: str,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db)
+):
+    """
+    Generates an executive summary and chapter takeaways from the document (Upgrade 4).
+    """
+    try:
+        return await rag_service.summarize_document(session, current_user.id, document_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+@router.get("/{document_id}/concepts")
+async def get_document_concepts(
+    document_id: str,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db)
+):
+    """
+    Extracts key technical concepts and definitions from document notes (Upgrade 4).
+    """
+    return await rag_service.extract_concepts(session, current_user.id, document_id)
+
+@router.post("/{document_id}/generate-questions")
+async def generate_document_questions(
+    document_id: str,
+    count: int = 5,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db)
+):
+    """
+    Generates self-assessment questions grounded directly in the uploaded document (Upgrade 4).
+    """
+    return await rag_service.generate_key_questions(session, current_user.id, document_id, count=count)
+
+@router.post("/evaluate-retrieval")
+async def evaluate_retrieval_benchmark(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db)
+):
+    """
+    Evaluates hybrid retrieval performance across benchmark queries (Precision@K and MRR).
+    """
+    test_queries = [
+        {"query": "ACID transaction isolation levels", "expected_keywords": ["acid", "transaction", "isolation", "serializable"]},
+        {"query": "B-Tree index search complexity", "expected_keywords": ["b-tree", "index", "search", "logarithmic", "o(log n)"]},
+        {"query": "Database normalization 3NF and BCNF", "expected_keywords": ["normalization", "normal", "form", "3nf", "bcnf", "redundancy"]}
+    ]
+    return await rag_service.evaluate_retrieval(session, current_user.id, test_queries)
+

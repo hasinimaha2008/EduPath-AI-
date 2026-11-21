@@ -56,6 +56,7 @@ async def login_user(login_data: UserLogin, session: AsyncSession = Depends(get_
     )
 
 @router.get("/demo-login", response_model=TokenResponse)
+@router.post("/demo-login", response_model=TokenResponse)
 async def demo_login(session: AsyncSession = Depends(get_db)):
     stmt = select(User).where(User.email == "demo@edupath.ai")
     res = await session.execute(stmt)

@@ -1,22 +1,83 @@
+"""
+Central EduPath Intelligence Engine 2.0.
+Interconnects:
+- Workflow A (Weak Topic Loop): Quiz evaluations -> Mistake classification -> Topic performance -> Spaced repetition scheduler -> Weak topic notifications.
+- Workflow B (Career Development Loop): Target career selection -> Demonstrated vs Missing skills -> Project recommendations -> Milestones.
+- Workflow C (Document-Based Learning Loop): Document upload -> Hybrid extraction -> Executive summary -> Concept extraction -> Quiz generation -> Ready notification.
+- Persistent Learning Profile (LearningProfile).
+- Unified Topic Workspace aggregation.
+- Real-time verifiable learning analytics (zero fabrication).
+"""
+
 import json
+import logging
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, desc
+from sqlalchemy import select, func, desc, and_
+
 from app.models.models import (
     User, Subject, Topic, Quiz, Question, QuizAttempt, UserAnswer,
     TopicPerformance, CareerRole, Skill, SubjectSkillMapping,
     CareerSkillRequirement, UserSkill, CareerRecommendation,
-    SkillGap, CareerRoadmap, RoadmapMilestone, StudyPlan, StudyTask
+    SkillGap, CareerRoadmap, RoadmapMilestone, StudyPlan, StudyTask,
+    LearningProfile, QuizMistake, Notification, CareerProject, CareerPathway,
+    Note, Document
 )
 from app.services.gemini_service import gemini_service
+from app.services.personalized_learning_service import personalized_learning_service
+
+logger = logging.getLogger("edupath.intelligence_engine")
 
 class EduPathIntelligenceEngine:
-    """
-    Central EduPath Intelligence Engine connecting learning activities, quiz results,
-    topic performance, academic-to-industry skill mapping, career recommendations,
-    skill gaps, and adaptive study planning.
-    """
+
+    @staticmethod
+    def _classify_error_category(question_type: str, question_text: str, user_resp: str, correct_ans: str) -> str:
+        """
+        Classifies student quiz mistakes into 6 standardized categories:
+        - conceptual_misunderstanding
+        - incorrect_application
+        - calculation_error
+        - misinterpretation
+        - knowledge_gap
+        - unclassified
+        """
+        user_clean = user_resp.strip().lower()
+        q_lower = question_text.lower()
+
+        # 1. Knowledge Gap (blank or generic clueless response)
+        if not user_clean or user_clean in ["?", "idk", "i don't know", "not sure", "none", "no idea"]:
+            return "knowledge_gap"
+
+        # 2. Calculation / Complexity Error
+        if any(term in q_lower for term in ["complexity", "o(", "time complexity", "space complexity", "calculate", "bits", "bytes", "cost", "percentage"]):
+            return "calculation_error"
+
+        # 3. Incorrect Application (Scenario or system design questions)
+        if question_type in ["scenario_based", "application_oriented", "technical_interview", "programming"]:
+            return "incorrect_application"
+
+        # 4. Misinterpretation (Question contains NOT, EXCEPT, FALSE or user picked exact opposite)
+        if any(term in q_lower for term in [" not ", " except ", " false ", " incorrect ", "least"]):
+            return "misinterpretation"
+
+        # 5. Conceptual Misunderstanding (Default for theory / MCQ / definition errors)
+        return "conceptual_misunderstanding"
+
+    @staticmethod
+    def _generate_suggested_fix(error_category: str, topic_name: str, explanation: str) -> str:
+        """
+        Generates actionable pedagogical advice for the student.
+        """
+        fixes = {
+            "conceptual_misunderstanding": f"Review core foundational axioms and mental models for {topic_name}. {explanation[:120]}",
+            "incorrect_application": f"Practice real-world edge cases and system trade-offs in {topic_name}. Focus on failure modes and invariants.",
+            "calculation_error": f"Revisit step-by-step mathematical derivations and asymptotic bounds for {topic_name}.",
+            "misinterpretation": f"Carefully identify negative qualifiers ('NOT', 'EXCEPT') in problem prompts before selecting answers.",
+            "knowledge_gap": f"Read the structured overview notes for {topic_name} before retaking the assessment.",
+            "unclassified": f"Re-read the question rubric and analyze the model solution."
+        }
+        return fixes.get(error_category, f"Review explanation for {topic_name}: {explanation[:100]}")
 
     @staticmethod
     async def evaluate_quiz_submission(
@@ -27,10 +88,13 @@ class EduPathIntelligenceEngine:
         time_taken_seconds: int = 0
     ) -> Dict[str, Any]:
         """
-        Evaluates submitted quiz, updates topic performance with repeated evidence rules,
-        synchronizes user skills, and recalculates career intelligence.
+        Evaluates quiz submission, executes Workflow A:
+        1. Scores all question types.
+        2. Classifies mistakes and tracks repeated errors.
+        3. Updates topic performance with repeated evidence rules.
+        4. Triggers weak topic alerts and spaced repetition scheduling if score < 70%.
+        5. Synchronizes user skills and recalculates career intelligence.
         """
-        # Fetch quiz and questions
         quiz_stmt = select(Quiz).where(Quiz.id == quiz_id)
         quiz_res = await session.execute(quiz_stmt)
         quiz = quiz_res.scalar_one_or_none()
@@ -40,7 +104,6 @@ class EduPathIntelligenceEngine:
         q_stmt = select(Question).where(Question.quiz_id == quiz_id)
         q_res = await session.execute(q_stmt)
         questions = q_res.scalars().all()
-        q_map = {q.id: q for q in questions}
 
         total_score = 0.0
         max_score = sum(q.points for q in questions) or 1.0
@@ -50,9 +113,39 @@ class EduPathIntelligenceEngine:
 
         for q in questions:
             user_resp = answer_lookup.get(q.id, "").strip()
-            # Case-insensitive comparison for MCQs
-            is_correct = (user_resp.lower() == q.correct_answer.strip().lower())
-            pts = q.points if is_correct else 0.0
+            q_type = q.question_type or "mcq"
+
+            if q_type == "multiple_select":
+                user_selected = {x.strip().lower() for x in user_resp.replace(";", ",").split(",") if x.strip()}
+                correct_selected = {x.strip().lower() for x in q.correct_answer.replace(";", ",").split(",") if x.strip()}
+                if user_selected == correct_selected and len(correct_selected) > 0:
+                    is_correct = True
+                    pts = float(q.points)
+                    fb = q.explanation or "All correct options selected!"
+                elif user_selected.issubset(correct_selected) and len(user_selected) > 0:
+                    is_correct = True
+                    pts = round(float(q.points) * (len(user_selected) / len(correct_selected)), 1)
+                    fb = f"Partial credit: Selected {len(user_selected)} of {len(correct_selected)} correct options. {q.explanation}"
+                else:
+                    is_correct = False
+                    pts = 0.0
+                    fb = f"Incorrect selections. {q.explanation}"
+            elif q_type in ["short_answer", "long_answer", "technical_interview", "programming"] or (not q.options_json and q_type in ["scenario_based", "application_oriented"]):
+                eval_res = await gemini_service.evaluate_open_answer(
+                    question_text=q.question_text,
+                    question_type=q_type,
+                    correct_answer=q.correct_answer,
+                    user_response=user_resp
+                )
+                is_correct = eval_res.get("is_correct", False)
+                score_ratio = eval_res.get("score_ratio", 1.0 if is_correct else 0.0)
+                pts = round(float(q.points) * score_ratio, 1)
+                fb = f"{eval_res.get('feedback', '')} | Reference Key: {q.explanation}"
+            else:
+                is_correct = (user_resp.lower() == q.correct_answer.strip().lower())
+                pts = float(q.points) if is_correct else 0.0
+                fb = q.explanation
+
             total_score += pts
 
             evaluated_answers.append({
@@ -60,12 +153,12 @@ class EduPathIntelligenceEngine:
                 "user_response": user_resp,
                 "is_correct": is_correct,
                 "score_awarded": pts,
-                "feedback": q.explanation
+                "feedback": fb
             })
 
         percentage = round((total_score / max_score) * 100.0, 1)
 
-        # Record Quiz Attempt
+        # 1. Record Quiz Attempt
         attempt = QuizAttempt(
             user_id=user_id,
             quiz_id=quiz_id,
@@ -78,10 +171,25 @@ class EduPathIntelligenceEngine:
         session.add(attempt)
         await session.flush()
 
+        # 2. Record User Answers & Classify Mistakes (Upgrade 5)
+        mistakes_recorded = []
+        topic_id = quiz.topic_id
+        subject_id = quiz.subject_id
+
+        # Fetch topic name for context
+        topic_name = "Core Topic"
+        if topic_id:
+            t_stmt = select(Topic.name).where(Topic.id == topic_id)
+            t_res = await session.execute(t_stmt)
+            t_name = t_res.scalar_one_or_none()
+            if t_name:
+                topic_name = t_name
+
         for ea in evaluated_answers:
+            q = ea["question"]
             ua = UserAnswer(
                 attempt_id=attempt.id,
-                question_id=ea["question"].id,
+                question_id=q.id,
                 user_response=ea["user_response"],
                 is_correct=ea["is_correct"],
                 score_awarded=ea["score_awarded"],
@@ -89,10 +197,48 @@ class EduPathIntelligenceEngine:
             )
             session.add(ua)
 
-        # Update Topic Performance if linked to a topic
-        topic_id = quiz.topic_id
-        subject_id = quiz.subject_id
+            # If answer is incorrect, log into QuizMistake
+            if not ea["is_correct"]:
+                error_cat = EduPathIntelligenceEngine._classify_error_category(
+                    question_type=q.question_type or "mcq",
+                    question_text=q.question_text,
+                    user_resp=ea["user_response"],
+                    correct_ans=q.correct_answer
+                )
+                suggested_fix = EduPathIntelligenceEngine._generate_suggested_fix(error_cat, topic_name, q.explanation or "")
 
+                # Check if student made mistake on this question previously
+                prev_mistake_stmt = select(QuizMistake).where(
+                    QuizMistake.user_id == user_id,
+                    QuizMistake.question_id == q.id
+                ).order_by(QuizMistake.created_at.desc()).limit(1)
+                prev_mistake_res = await session.execute(prev_mistake_stmt)
+                prev_mistake = prev_mistake_res.scalars().first()
+
+                repeated_count = (prev_mistake.repeated_count + 1) if prev_mistake else 1
+
+                mistake = QuizMistake(
+                    user_id=user_id,
+                    quiz_attempt_id=attempt.id,
+                    question_id=q.id,
+                    topic_id=topic_id,
+                    error_category=error_cat,
+                    user_response=ea["user_response"][:500],
+                    correct_answer=q.correct_answer[:500],
+                    explanation=(q.explanation or "")[:500],
+                    suggested_fix=suggested_fix,
+                    repeated_count=repeated_count
+                )
+                session.add(mistake)
+                mistakes_recorded.append({
+                    "question_id": q.id,
+                    "error_category": error_cat,
+                    "repeated_count": repeated_count,
+                    "suggested_fix": suggested_fix
+                })
+
+        # 3. Update Topic Performance
+        tp = None
         if topic_id:
             tp_stmt = select(TopicPerformance).where(
                 TopicPerformance.user_id == user_id,
@@ -128,10 +274,39 @@ class EduPathIntelligenceEngine:
 
             await session.flush()
 
-            # Update linked skills via SubjectSkillMapping
+            # Synchronize linked skills
             await EduPathIntelligenceEngine._sync_topic_to_user_skills(session, user_id, topic_id, tp.accuracy_percentage)
 
-        # Re-evaluate career recommendations and gaps
+            # 4. WORKFLOW A: Weak Topic Loop & Spaced Repetition Trigger
+            if percentage < 70.0 or tp.mastery_status in ["needs_practice", "developing"]:
+                # Schedule Ebbinghaus spaced repetition task
+                await personalized_learning_service.schedule_spaced_repetition(
+                    session=session,
+                    user_id=user_id,
+                    topic_id=topic_id,
+                    latest_percentage=percentage
+                )
+                # Create Weak Topic Notification
+                notif = Notification(
+                    user_id=user_id,
+                    title=f"Weak Topic Alert: {topic_name}",
+                    message=f"Score: {percentage}%. We've scheduled an adaptive spaced repetition review for {topic_name}.",
+                    notification_type="weak_topic_alert",
+                    action_url=f"/dashboard/workspace?topic_id={topic_id}"
+                )
+                session.add(notif)
+            else:
+                # If student demonstrated proficient score, create milestone feedback notification
+                notif = Notification(
+                    user_id=user_id,
+                    title=f"Quiz Mastered: {topic_name} ({percentage}%)",
+                    message=f"Great job! You achieved {percentage}% on {topic_name}. Your skill proficiency has been updated.",
+                    notification_type="quiz_feedback",
+                    action_url=f"/dashboard/workspace?topic_id={topic_id}"
+                )
+                session.add(notif)
+
+        # 5. Re-evaluate Career Intelligence (Workflow B)
         await EduPathIntelligenceEngine.recalculate_career_intelligence(session, user_id)
 
         await session.commit()
@@ -144,6 +319,8 @@ class EduPathIntelligenceEngine:
             "percentage": percentage,
             "time_taken_seconds": time_taken_seconds,
             "completed_at": attempt.completed_at,
+            "mistakes_recorded": mistakes_recorded,
+            "mastery_status": tp.mastery_status if tp else "unspecified",
             "answers": [
                 {
                     "question_id": ea["question"].id,
@@ -160,13 +337,6 @@ class EduPathIntelligenceEngine:
 
     @staticmethod
     def _calculate_mastery(total_attempts: int, accuracy: float) -> str:
-        """
-        Mastery requires repeated evidence:
-        - Mastered: >= 90% accuracy with at least 3 attempts
-        - Proficient: >= 75% accuracy with at least 2 attempts
-        - Developing: 50% - 74% accuracy
-        - Needs Practice: < 50% accuracy or single low attempt
-        """
         if total_attempts >= 3 and accuracy >= 90.0:
             return "mastered"
         elif total_attempts >= 2 and accuracy >= 75.0:
@@ -178,10 +348,6 @@ class EduPathIntelligenceEngine:
 
     @staticmethod
     async def _sync_topic_to_user_skills(session: AsyncSession, user_id: str, topic_id: str, accuracy: float):
-        """
-        Updates verified user skill proficiency based on topic assessment results.
-        """
-        # Find skills mapped to this topic
         map_stmt = select(SubjectSkillMapping).where(SubjectSkillMapping.topic_id == topic_id)
         map_res = await session.execute(map_stmt)
         mappings = map_res.scalars().all()
@@ -211,7 +377,6 @@ class EduPathIntelligenceEngine:
                 )
                 session.add(user_skill)
             else:
-                # Weighted moving average for proficiency
                 user_skill.proficiency_level = round((user_skill.proficiency_level * 0.4) + (accuracy * 0.6), 1)
                 user_skill.source = "demonstrated"
                 user_skill.verified = True
@@ -221,25 +386,27 @@ class EduPathIntelligenceEngine:
     @staticmethod
     async def recalculate_career_intelligence(session: AsyncSession, user_id: str):
         """
-        Recomputes career role recommendations and skill gaps based on actual demonstrated competencies.
+        Recalculates career role recommendations, skill gaps, and checks target career status (Workflow B).
         """
-        # Fetch all career roles
         roles_stmt = select(CareerRole)
         roles_res = await session.execute(roles_stmt)
         roles = roles_res.scalars().all()
 
-        # Fetch user's skills
         us_stmt = select(UserSkill).where(UserSkill.user_id == user_id)
         us_res = await session.execute(us_stmt)
         user_skills = {us.skill_id: us for us in us_res.scalars().all()}
 
-        # Fetch skill details
         skills_stmt = select(Skill)
         skills_res = await session.execute(skills_stmt)
         skills_dict = {s.id: s for s in skills_res.scalars().all()}
 
+        # Fetch user's target career from learning profile
+        lp_stmt = select(LearningProfile).where(LearningProfile.user_id == user_id).limit(1)
+        lp_res = await session.execute(lp_stmt)
+        lp = lp_res.scalars().first()
+        target_role_id = lp.target_career_id if lp else None
+
         for role in roles:
-            # Fetch required skills for this role
             req_stmt = select(CareerSkillRequirement).where(CareerSkillRequirement.career_role_id == role.id)
             req_res = await session.execute(req_stmt)
             requirements = req_res.scalars().all()
@@ -267,7 +434,7 @@ class EduPathIntelligenceEngine:
                     if user_prof >= req.min_proficiency:
                         matching_skills.append(skill_name)
                     else:
-                        missing_skills.append(f"{skill_name} (Needs improvement: {user_prof}% vs {req.min_proficiency}% req)")
+                        missing_skills.append(f"{skill_name} ({user_prof}% / {req.min_proficiency}%)")
                 else:
                     missing_skills.append(skill_name)
 
@@ -310,7 +477,6 @@ class EduPathIntelligenceEngine:
                 f"priority skill gaps identified for target role readiness."
             )
 
-            # Upsert Recommendation
             rec_stmt = select(CareerRecommendation).where(
                 CareerRecommendation.user_id == user_id,
                 CareerRecommendation.career_role_id == role.id
@@ -335,12 +501,304 @@ class EduPathIntelligenceEngine:
                 rec.recommended_at = datetime.now(timezone.utc)
 
     @staticmethod
+    async def get_or_create_learning_profile(session: AsyncSession, user_id: str) -> LearningProfile:
+        """
+        Retrieves user's persistent learning profile or creates default if not existing.
+        """
+        stmt = select(LearningProfile).where(LearningProfile.user_id == user_id).limit(1)
+        res = await session.execute(stmt)
+        profile = res.scalars().first()
+
+        if not profile:
+            # Default to first available career role
+            role_stmt = select(CareerRole.id).limit(1)
+            role_res = await session.execute(role_stmt)
+            default_role_id = role_res.scalar_one_or_none()
+
+            profile = LearningProfile(
+                user_id=user_id,
+                preferred_language="en",
+                explanation_style="step_by_step",
+                daily_goal_minutes=45,
+                target_career_id=default_role_id,
+                learning_preferences_json=json.dumps({
+                    "focus_areas": ["Databases", "Algorithms"],
+                    "reminder_frequency": "daily"
+                })
+            )
+            session.add(profile)
+            await session.commit()
+            await session.refresh(profile)
+
+        return profile
+
+    @staticmethod
+    async def update_learning_profile(
+        session: AsyncSession,
+        user_id: str,
+        updates: Dict[str, Any]
+    ) -> LearningProfile:
+        """
+        Updates learning profile and triggers Workflow B notifications if target career changes.
+        """
+        profile = await EduPathIntelligenceEngine.get_or_create_learning_profile(session, user_id)
+        prev_target_career = profile.target_career_id
+
+        if "preferred_language" in updates and updates["preferred_language"]:
+            profile.preferred_language = updates["preferred_language"]
+        if "explanation_style" in updates and updates["explanation_style"]:
+            profile.explanation_style = updates["explanation_style"]
+        if "daily_goal_minutes" in updates and updates["daily_goal_minutes"]:
+            profile.daily_goal_minutes = int(updates["daily_goal_minutes"])
+        if "target_career_id" in updates:
+            profile.target_career_id = updates["target_career_id"]
+        if "learning_preferences" in updates and updates["learning_preferences"]:
+            profile.learning_preferences_json = json.dumps(updates["learning_preferences"])
+
+        profile.updated_at = datetime.now(timezone.utc)
+
+        # Trigger Workflow B notification if target career changed
+        if profile.target_career_id and profile.target_career_id != prev_target_career:
+            role_stmt = select(CareerRole).where(CareerRole.id == profile.target_career_id)
+            role_res = await session.execute(role_stmt)
+            role = role_res.scalar_one_or_none()
+            if role:
+                notif = Notification(
+                    user_id=user_id,
+                    title=f"Career Goal Updated: {role.title}",
+                    message=f"You are now targeting {role.title}. We've re-aligned your skill gap curriculum and practical project milestones.",
+                    notification_type="career_milestone",
+                    action_url=f"/dashboard/careers"
+                )
+                session.add(notif)
+
+        await session.commit()
+        await session.refresh(profile)
+        return profile
+
+    @staticmethod
+    async def get_mistake_insights(session: AsyncSession, user_id: str) -> Dict[str, Any]:
+        """
+        Calculates comprehensive mistake analytics (Upgrade 5):
+        - Mistakes grouped by error category
+        - Repeated mistakes detection
+        - Improvement rate & trend
+        - Actionable recommendations
+        """
+        stmt = select(QuizMistake, Topic.name, Question.question_text).join(
+            Topic, QuizMistake.topic_id == Topic.id, isouter=True
+        ).join(
+            Question, QuizMistake.question_id == Question.id, isouter=True
+        ).where(
+            QuizMistake.user_id == user_id
+        ).order_by(QuizMistake.created_at.desc())
+
+        res = await session.execute(stmt)
+        rows = res.all()
+
+        total_mistakes = len(rows)
+        category_counts: Dict[str, int] = {}
+        repeated_mistakes = []
+        recent_mistakes_list = []
+
+        for mistake, topic_name, q_text in rows:
+            cat = mistake.error_category or "unclassified"
+            category_counts[cat] = category_counts.get(cat, 0) + 1
+
+            item = {
+                "id": mistake.id,
+                "topic_name": topic_name or "General Topic",
+                "question_text": (q_text or "Assessment Question")[:120],
+                "error_category": cat,
+                "user_response": mistake.user_response,
+                "correct_answer": mistake.correct_answer,
+                "explanation": mistake.explanation,
+                "suggested_fix": mistake.suggested_fix,
+                "repeated_count": mistake.repeated_count,
+                "created_at": mistake.created_at
+            }
+            recent_mistakes_list.append(item)
+
+            if mistake.repeated_count > 1:
+                repeated_mistakes.append(item)
+
+        # Calculate improvement rate from quiz attempts
+        attempts_stmt = select(QuizAttempt).where(QuizAttempt.user_id == user_id).order_by(QuizAttempt.completed_at.asc())
+        attempts_res = await session.execute(attempts_stmt)
+        attempts = attempts_res.scalars().all()
+
+        improvement_rate = 0.0
+        if len(attempts) >= 2:
+            first_half = attempts[:len(attempts)//2]
+            second_half = attempts[len(attempts)//2:]
+            avg_1 = sum(a.percentage for a in first_half) / len(first_half)
+            avg_2 = sum(a.percentage for a in second_half) / len(second_half)
+            improvement_rate = round(avg_2 - avg_1, 1)
+
+        # Primary weakness recommendation
+        top_weak_cat = max(category_counts.items(), key=lambda x: x[1])[0] if category_counts else "conceptual_misunderstanding"
+        category_labels = {
+            "conceptual_misunderstanding": "Conceptual Axioms & Theory",
+            "incorrect_application": "Real-World Application & Architecture",
+            "calculation_error": "Complexity Derivations & Calculations",
+            "misinterpretation": "Question Parsing & Negative Qualifiers",
+            "knowledge_gap": "Foundational Prerequisite Coverage",
+            "unclassified": "General Review"
+        }
+
+        actionable_advice = f"Your most frequent error type is '{category_labels.get(top_weak_cat, top_weak_cat)}' ({category_counts.get(top_weak_cat, 0)} occurrences). Focus your next revision on core principles rather than rushed multiple-choice guessing."
+
+        return {
+            "total_mistakes": total_mistakes,
+            "repeated_mistakes_count": len(repeated_mistakes),
+            "improvement_rate": improvement_rate,
+            "category_distribution": [
+                {"category": k, "label": category_labels.get(k, k), "count": v}
+                for k, v in category_counts.items()
+            ],
+            "repeated_mistakes": repeated_mistakes[:5],
+            "recent_mistakes": recent_mistakes_list[:10],
+            "actionable_advice": actionable_advice
+        }
+
+    @staticmethod
+    async def get_topic_workspace(session: AsyncSession, user_id: str, topic_id: str) -> Dict[str, Any]:
+        """
+        Aggregates all learning modalities for a specific topic (Upgrade 7):
+        - Topic details & Subject context
+        - User topic performance & accuracy
+        - Notes generated for topic
+        - Uploaded documents linked to subject
+        - Recent quiz attempts
+        - Due spaced repetition revision tasks
+        """
+        # Topic & Subject
+        topic_stmt = select(Topic, Subject).join(
+            Subject, Topic.subject_id == Subject.id, isouter=True
+        ).where(Topic.id == topic_id)
+        topic_res = await session.execute(topic_stmt)
+        topic_row = topic_res.first()
+        if not topic_row:
+            raise ValueError(f"Topic {topic_id} not found")
+
+        topic, subject = topic_row
+
+        # Performance
+        tp_stmt = select(TopicPerformance).where(
+            TopicPerformance.user_id == user_id,
+            TopicPerformance.topic_id == topic_id
+        ).limit(1)
+        tp_res = await session.execute(tp_stmt)
+        tp = tp_res.scalars().first()
+
+        # Notes
+        notes_stmt = select(Note).where(
+            Note.user_id == user_id,
+            Note.topic_id == topic_id
+        ).order_by(Note.created_at.desc()).limit(5)
+        notes_res = await session.execute(notes_stmt)
+        notes = notes_res.scalars().all()
+
+        # Documents
+        docs_stmt = select(Document).where(
+            Document.user_id == user_id,
+            Document.subject_id == topic.subject_id
+        ).order_by(Document.created_at.desc()).limit(5)
+        docs_res = await session.execute(docs_stmt)
+        docs = docs_res.scalars().all()
+
+        # Quizzes & Attempts
+        attempts_stmt = select(QuizAttempt, Quiz.title).join(
+            Quiz, QuizAttempt.quiz_id == Quiz.id
+        ).where(
+            QuizAttempt.user_id == user_id,
+            Quiz.topic_id == topic_id
+        ).order_by(QuizAttempt.completed_at.desc()).limit(5)
+        attempts_res = await session.execute(attempts_stmt)
+        attempts_rows = attempts_res.all()
+
+        # Due Revisions for this topic
+        today_str = datetime.now(timezone.utc).date().strftime("%Y-%m-%d")
+        tasks_stmt = select(StudyTask).join(
+            StudyPlan, StudyTask.study_plan_id == StudyPlan.id
+        ).where(
+            StudyPlan.user_id == user_id,
+            StudyTask.topic_id == topic_id,
+            StudyTask.is_completed == False
+        ).order_by(StudyTask.scheduled_date.asc())
+        tasks_res = await session.execute(tasks_stmt)
+        tasks = tasks_res.scalars().all()
+
+        return {
+            "topic": {
+                "id": topic.id,
+                "name": topic.name,
+                "description": topic.description,
+                "module_name": topic.module_name,
+                "subtopics": topic.subtopics,
+                "is_emerging": topic.is_emerging,
+                "source_reference": topic.source_reference,
+                "subject_id": subject.id if subject else None,
+                "subject_name": subject.name if subject else "General"
+            },
+            "performance": {
+                "total_attempts": tp.total_attempts if tp else 0,
+                "correct_answers": tp.correct_answers if tp else 0,
+                "incorrect_answers": tp.incorrect_answers if tp else 0,
+                "accuracy_percentage": tp.accuracy_percentage if tp else 0.0,
+                "mastery_status": tp.mastery_status if tp else "not_started",
+                "last_practiced_at": tp.last_practiced_at if tp else None
+            },
+            "notes": [
+                {
+                    "id": n.id,
+                    "title": n.title,
+                    "note_type": n.note_type,
+                    "content_preview": n.content[:200] + "...",
+                    "created_at": n.created_at
+                }
+                for n in notes
+            ],
+            "documents": [
+                {
+                    "id": d.id,
+                    "title": d.title,
+                    "status": d.status,
+                    "file_type": d.file_type,
+                    "created_at": d.created_at
+                }
+                for d in docs
+            ],
+            "quiz_attempts": [
+                {
+                    "attempt_id": att.id,
+                    "quiz_title": title,
+                    "score": att.score,
+                    "max_score": att.max_score,
+                    "percentage": att.percentage,
+                    "completed_at": att.completed_at
+                }
+                for att, title in attempts_rows
+            ],
+            "revision_tasks": [
+                {
+                    "id": t.id,
+                    "title": t.title,
+                    "description": t.description,
+                    "scheduled_date": t.scheduled_date,
+                    "is_due": t.scheduled_date <= today_str,
+                    "priority": t.priority
+                }
+                for t in tasks
+            ]
+        }
+
+    @staticmethod
     async def get_user_analytics(session: AsyncSession, user_id: str) -> Dict[str, Any]:
         """
         Calculates verified learning analytics from actual user quiz attempts and topic performances.
         Never fabricates sample stats.
         """
-        # Quiz attempts stats
         attempts_stmt = select(QuizAttempt).where(QuizAttempt.user_id == user_id).order_by(QuizAttempt.completed_at.desc())
         attempts_res = await session.execute(attempts_stmt)
         attempts = attempts_res.scalars().all()
@@ -348,7 +806,6 @@ class EduPathIntelligenceEngine:
         total_quizzes = len(attempts)
         avg_score = round(sum(a.percentage for a in attempts) / total_quizzes, 1) if total_quizzes > 0 else 0.0
 
-        # Topic performances
         tp_stmt = select(TopicPerformance, Topic.name, Subject.name).join(
             Topic, TopicPerformance.topic_id == Topic.id
         ).join(
@@ -380,7 +837,7 @@ class EduPathIntelligenceEngine:
                 strong_topics.append(item)
             else:
                 weak_topics.append(item)
-                revision_recs.append(f"Review core principles for {topic_name} (current accuracy: {tp.accuracy_percentage}%)")
+                revision_recs.append(f"Review core principles for {topic_name} (accuracy: {tp.accuracy_percentage}%, attempts: {tp.total_attempts})")
 
         # Activity by day
         today = datetime.now(timezone.utc).date()
@@ -400,7 +857,7 @@ class EduPathIntelligenceEngine:
         total_study_hours = round(sum(a.time_taken_seconds for a in attempts) / 3600.0, 1)
 
         if not revision_recs:
-            revision_recs.append("Complete topic quizzes across DBMS and Systems Architecture to uncover priority learning areas.")
+            revision_recs.append("Complete topic quizzes across your enrolled subjects to uncover priority learning areas.")
 
         return {
             "total_quizzes_attempted": total_quizzes,
@@ -425,7 +882,6 @@ class EduPathIntelligenceEngine:
         Creates a realistic, non-overlapping daily and weekly study plan
         prioritizing verified weak topics and missing career skills.
         """
-        # Fetch weak topics
         weak_stmt = select(TopicPerformance, Topic).join(
             Topic, TopicPerformance.topic_id == Topic.id
         ).where(
@@ -435,7 +891,6 @@ class EduPathIntelligenceEngine:
         weak_res = await session.execute(weak_stmt)
         weak_pairs = weak_res.all()
 
-        # If user has no weak topics yet, pull fundamental curriculum topics
         candidate_topics = []
         if weak_pairs:
             candidate_topics = [(tp.topic_id, t.name, "High") for tp, t in weak_pairs]
@@ -444,7 +899,6 @@ class EduPathIntelligenceEngine:
             top_res = await session.execute(top_stmt)
             candidate_topics = [(t.id, t.name, "Medium") for t in top_res.scalars().all()]
 
-        # Create Study Plan
         plan = StudyPlan(
             user_id=user_id,
             title=title,
@@ -456,14 +910,12 @@ class EduPathIntelligenceEngine:
         session.add(plan)
         await session.flush()
 
-        # Generate realistic tasks without schedule collisions
         start_date = datetime.now(timezone.utc).date()
         topic_idx = 0
 
         for day in range(min(days_duration, 14)):
             current_date = (start_date + timedelta(days=day)).strftime("%Y-%m-%d")
             
-            # 2 focused tasks per day
             for task_slot in range(2):
                 if candidate_topics:
                     topic_id, topic_name, priority = candidate_topics[topic_idx % len(candidate_topics)]

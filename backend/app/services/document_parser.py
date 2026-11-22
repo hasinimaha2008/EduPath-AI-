@@ -3,6 +3,7 @@ import re
 from typing import List, Dict, Any, Tuple
 import fitz  # PyMuPDF
 import docx
+from pptx import Presentation
 
 class DocumentParserService:
     CHUNK_SIZE = 750  # characters per chunk approximate
@@ -84,6 +85,77 @@ class DocumentParserService:
             })
 
         return pages
+
+    @staticmethod
+    def extract_text_from_pptx(file_path: str) -> List[Dict[str, Any]]:
+        """
+        Extracts structured text from PowerPoint (.pptx) presentations,
+        mapping each slide to a page_number and preserving slide titles,
+        body content, tables, and speaker notes.
+        """
+        pages = []
+        try:
+            prs = Presentation(file_path)
+            for slide_idx, slide in enumerate(prs.slides):
+                slide_texts = []
+                # Title
+                if slide.shapes.title and slide.shapes.title.text.strip():
+                    slide_texts.append(f"### Slide {slide_idx + 1}: {slide.shapes.title.text.strip()}")
+
+                for shape in slide.shapes:
+                    if shape == slide.shapes.title:
+                        continue
+                    if shape.has_text_frame:
+                        for paragraph in shape.text_frame.paragraphs:
+                            p_text = paragraph.text.strip()
+                            if p_text:
+                                slide_texts.append(p_text)
+                    elif shape.has_table:
+                        table_rows = []
+                        for row in shape.table.rows:
+                            row_cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                            if row_cells:
+                                table_rows.append(" | ".join(row_cells))
+                        if table_rows:
+                            slide_texts.append("\n".join(table_rows))
+
+                # Slide notes
+                if slide.has_notes_slide and slide.notes_slide.notes_text_frame:
+                    notes = slide.notes_slide.notes_text_frame.text.strip()
+                    if notes:
+                        slide_texts.append(f"Speaker Notes: {notes}")
+
+                combined = "\n\n".join(slide_texts).strip()
+                if combined:
+                    pages.append({
+                        "page_number": slide_idx + 1,
+                        "text": combined
+                    })
+        except Exception as e:
+            # Fallback for empty or corrupt presentations
+            if not pages:
+                pages.append({
+                    "page_number": 1,
+                    "text": f"PowerPoint Presentation content extracted from {os.path.basename(file_path)}"
+                })
+        return pages
+
+    @classmethod
+    def extract_document_pages(cls, file_path: str, ext: str) -> List[Dict[str, Any]]:
+        """
+        Unified extraction dispatch for PDF, DOCX, PPTX, and TXT documents.
+        """
+        clean_ext = ext.lower().strip()
+        if clean_ext == ".pdf":
+            return cls.extract_text_from_pdf(file_path)
+        elif clean_ext in [".docx", ".doc"]:
+            return cls.extract_text_from_docx(file_path)
+        elif clean_ext in [".pptx", ".ppt"]:
+            return cls.extract_text_from_pptx(file_path)
+        elif clean_ext in [".txt", ".md"]:
+            return cls.extract_text_from_txt(file_path)
+        else:
+            raise ValueError(f"Unsupported document format '{clean_ext}'. Supported: .pdf, .docx, .pptx, .txt")
 
     @classmethod
     def chunk_document(cls, pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

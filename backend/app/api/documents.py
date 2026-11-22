@@ -2,6 +2,7 @@ import os
 import shutil
 import uuid
 from typing import List, Optional
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -15,6 +16,14 @@ from app.services.rag_service import rag_service
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
+class DocumentAskRequest(BaseModel):
+    question: str
+    language: Optional[str] = "auto"
+
+class DocumentExplainRequest(BaseModel):
+    topic: str
+    depth: Optional[str] = "step_by_step"
+
 @router.post("/upload", response_model=DocumentResponse)
 async def upload_document(
     file: UploadFile = File(...),
@@ -26,10 +35,11 @@ async def upload_document(
     # Validate extension
     file_name = file.filename or "uploaded_doc"
     ext = os.path.splitext(file_name)[1].lower()
-    if ext not in [".pdf", ".docx"]:
+    allowed_exts = [".pdf", ".docx", ".pptx", ".txt"]
+    if ext not in allowed_exts:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Unsupported file format. Please upload a PDF (.pdf) or Word document (.docx)."
+            detail=f"Unsupported file format '{ext}'. Supported formats: PDF (.pdf), Word (.docx), PowerPoint (.pptx), Text (.txt)."
         )
 
     # Prepare upload directory
@@ -54,6 +64,14 @@ async def upload_document(
 
     doc_title = title.strip() if title and title.strip() else os.path.splitext(file_name)[0]
 
+    # Map file format
+    file_type_map = {
+        ".pdf": "pdf",
+        ".docx": "docx",
+        ".pptx": "pptx",
+        ".txt": "txt"
+    }
+
     # Create document record
     doc = Document(
         user_id=current_user.id,
@@ -62,7 +80,7 @@ async def upload_document(
         file_name=file_name,
         file_path=saved_path,
         file_size=bytes_read,
-        file_type="pdf" if ext == ".pdf" else "docx",
+        file_type=file_type_map.get(ext, "txt"),
         status="processing"
     )
     session.add(doc)
@@ -71,11 +89,7 @@ async def upload_document(
 
     # Process document extraction & indexing
     try:
-        if ext == ".pdf":
-            pages = DocumentParserService.extract_text_from_pdf(saved_path)
-        else:
-            pages = DocumentParserService.extract_text_from_docx(saved_path)
-
+        pages = DocumentParserService.extract_document_pages(saved_path, ext)
         chunk_data_list = DocumentParserService.chunk_document(pages)
         created_chunks = []
 
@@ -219,4 +233,130 @@ async def evaluate_retrieval_benchmark(
         {"query": "Database normalization 3NF and BCNF", "expected_keywords": ["normalization", "normal", "form", "3nf", "bcnf", "redundancy"]}
     ]
     return await rag_service.evaluate_retrieval(session, current_user.id, test_queries)
+
+@router.get("/{document_id}/preview")
+async def preview_document(
+    document_id: str,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db)
+):
+    """
+    Returns document preview with page count, word count, and extracted text snippets.
+    """
+    try:
+        return await rag_service.get_document_preview(session, current_user.id, document_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+@router.post("/{document_id}/ask")
+async def ask_document_content(
+    document_id: str,
+    req: DocumentAskRequest,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db)
+):
+    """
+    Asks questions grounded strictly in the document content with exact page references.
+    """
+    try:
+        return await rag_service.ask_document_question(
+            session=session,
+            user_id=current_user.id,
+            document_id=document_id,
+            question=req.question.strip(),
+            language=req.language or "auto"
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+@router.get("/{document_id}/notes")
+async def get_document_study_notes(
+    document_id: str,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db)
+):
+    """
+    Generates detailed, structured study notes module-by-module.
+    """
+    try:
+        return await rag_service.generate_study_notes(session, current_user.id, document_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+@router.get("/{document_id}/exam-prep")
+async def get_document_exam_prep(
+    document_id: str,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db)
+):
+    """
+    Generates high-yield exam questions with model answers, marks, and scoring criteria.
+    """
+    try:
+        return await rag_service.generate_exam_answers(session, current_user.id, document_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+@router.get("/{document_id}/definitions-formulas")
+async def get_document_definitions_and_formulas(
+    document_id: str,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db)
+):
+    """
+    Extracts key technical definitions and mathematical/scientific formulas.
+    """
+    try:
+        return await rag_service.extract_definitions_and_formulas(session, current_user.id, document_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+@router.get("/{document_id}/important-topics")
+async def get_document_important_topics(
+    document_id: str,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db)
+):
+    """
+    Identifies high-yield topics, importance rating, and estimated exam relevance.
+    """
+    try:
+        return await rag_service.identify_important_topics(session, current_user.id, document_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+@router.get("/{document_id}/revision-kit")
+async def get_document_revision_kit(
+    document_id: str,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db)
+):
+    """
+    Generates rapid revision materials: cheat sheets, flashcards, and common pitfalls.
+    """
+    try:
+        return await rag_service.generate_revision_materials(session, current_user.id, document_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+@router.post("/{document_id}/explain-topic")
+async def explain_topic_in_document(
+    document_id: str,
+    req: DocumentExplainRequest,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db)
+):
+    """
+    Deep-dive explanation of a difficult topic found within the document.
+    """
+    try:
+        return await rag_service.explain_document_topic(
+            session=session,
+            user_id=current_user.id,
+            document_id=document_id,
+            topic_name=req.topic.strip()
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
 

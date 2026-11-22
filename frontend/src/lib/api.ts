@@ -149,6 +149,52 @@ class ApiClient {
     });
   }
 
+  async previewDocument(id: string): Promise<any> {
+    return this.request(`/api/documents/${id}/preview`);
+  }
+
+  async askDocument(id: string, question: string, language?: string): Promise<{
+    answer: string;
+    found_in_document: boolean;
+    citations: Array<{ doc_title: string; page_number: number; snippet: string }>;
+  }> {
+    return this.request(`/api/documents/${id}/ask`, {
+      method: "POST",
+      body: JSON.stringify({ question, language }),
+    });
+  }
+
+  async getDocumentNotes(id: string): Promise<any> {
+    return this.request(`/api/documents/${id}/notes`);
+  }
+
+  async getDocumentExamPrep(id: string): Promise<any> {
+    return this.request(`/api/documents/${id}/exam-prep`);
+  }
+
+  async getDocumentDefinitionsAndFormulas(id: string): Promise<any> {
+    return this.request(`/api/documents/${id}/definitions-formulas`);
+  }
+
+  async getDocumentImportantTopics(id: string): Promise<any> {
+    return this.request(`/api/documents/${id}/important-topics`);
+  }
+
+  async getDocumentRevisionKit(id: string): Promise<any> {
+    return this.request(`/api/documents/${id}/revision-kit`);
+  }
+
+  async explainDocumentTopic(id: string, topic: string): Promise<{
+    topic: string;
+    explanation: string;
+    citations: Array<{ doc_title: string; page_number: number; snippet: string }>;
+  }> {
+    return this.request(`/api/documents/${id}/explain-topic`, {
+      method: "POST",
+      body: JSON.stringify({ topic }),
+    });
+  }
+
   async askAssistant(data: {
     question: string;
     conversation_id?: string;

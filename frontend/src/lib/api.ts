@@ -330,8 +330,12 @@ class ApiClient {
   // Notes
   async generateNotes(data: {
     topic_name?: string;
-    note_type: string;
+    note_type?: string;
     document_id?: string;
+    subject_id?: string;
+    unit_name?: string;
+    explanation_style?: string;
+    language?: string;
   }): Promise<Note> {
     return this.request<Note>("/api/notes/generate", {
       method: "POST",
@@ -339,8 +343,18 @@ class ApiClient {
     });
   }
 
-  async listNotes(noteType?: string): Promise<Note[]> {
-    const query = noteType ? `?note_type=${encodeURIComponent(noteType)}` : "";
+  async listNotes(params?: { note_type?: string; subject_id?: string; search?: string } | string): Promise<Note[]> {
+    let query = "";
+    if (typeof params === "string") {
+      query = `?note_type=${encodeURIComponent(params)}`;
+    } else if (params) {
+      const qp = new URLSearchParams();
+      if (params.note_type) qp.append("note_type", params.note_type);
+      if (params.subject_id) qp.append("subject_id", params.subject_id);
+      if (params.search) qp.append("search", params.search);
+      const str = qp.toString();
+      if (str) query = `?${str}`;
+    }
     return this.request<Note[]>(`/api/notes${query}`);
   }
 

@@ -148,8 +148,12 @@ class NoteResponse(BaseModel):
 class NoteGenerateRequest(BaseModel):
     document_id: Optional[str] = None
     topic_name: Optional[str] = None
+    subject_id: Optional[str] = None
     subject_name: Optional[str] = None
+    unit_name: Optional[str] = None
     note_type: str = "detailed"
+    explanation_style: Optional[str] = "standard"  # beginner, technical, point_wise, comparison, last_minute, standard
+    language: Optional[str] = "en"
 
 # --- Quiz Schemas ---
 class QuestionOption(BaseModel):

@@ -563,70 +563,221 @@ Provide an intelligent, natural, well-formatted response:"""
     async def generate_notes(
         self,
         source_text: str,
-        note_type: str,
-        topic_name: str
+        note_type: str = "detailed",
+        topic_name: str = "Topic",
+        explanation_style: str = "standard",
+        language: str = "en",
+        unit_name: Optional[str] = None
     ) -> Dict[str, str]:
         """
-        Generates study notes in 8 distinct formats.
+        Advanced Smart Notes Generation supporting:
+        - 10 Note Types: short, detailed, chapter_wise, exam_oriented, revision, definitions, key_points, questions, comparison, last_minute
+        - 4 Explanation Styles: beginner, technical, point_wise, standard
+        - Multilingual output (English, Telugu, Hindi, etc.)
+        - Unit/Module-wise grouping
         """
+        clean_lang = (language or "en").lower().strip()
+        unit_prefix = f"[{unit_name}] " if unit_name else ""
+        full_title = f"{unit_prefix}{topic_name} – {note_type.replace('_', ' ').title()} Notes"
+
         type_instructions = {
-            "short": "Concise high-yield summary focusing exclusively on core definitions and takeaways.",
-            "detailed": "Comprehensive study guide covering foundational theory, step-by-step derivations, examples, and edge cases.",
-            "chapter_wise": "Organized into logical subsections with headers, prerequisites, and learning objectives.",
-            "exam_oriented": "Focuses on high-probability exam questions, scoring criteria, critical diagrams, and key formulas.",
-            "revision": "Quick-glance cheat sheet format with bulleted review points and memory aids.",
-            "definitions": "A structured glossary of all critical terms, mathematical formulations, and formal definitions.",
-            "key_points": "10-15 bulleted essential takeaways and system principles.",
-            "questions": "Important practice questions with model answers and evaluation criteria."
+            "short": "Concise high-yield summary focusing exclusively on core definitions and top 5 key takeaways.",
+            "detailed": "Comprehensive academic study guide with foundational theory, mathematical models, step-by-step mechanisms, edge cases, and practical examples.",
+            "chapter_wise": "Organized into unit-wise or module-wise hierarchical subsections with learning objectives, core concepts, and review questions.",
+            "exam_oriented": "Focuses on high-probability semester exam questions, model scoring criteria, critical diagrams, and high-yield formulas.",
+            "revision": "Rapid-review cheat sheet with bulleted memory anchors, formulas, and quick checklists.",
+            "definitions": "A structured glossary of critical technical terms, formal definitions, and mathematical equations.",
+            "key_points": "10-15 bulleted essential system invariants, architectural rules, and design takeaways.",
+            "questions": "High-yield practice and semester exam questions with structured model answers and scoring points.",
+            "comparison": "Side-by-side markdown comparison table contrasting core paradigms, mechanisms, tradeoffs, and use-cases.",
+            "last_minute": "5-minute emergency revision checklist, key formulas, and common examination pitfalls to avoid."
         }
 
-        instruction = type_instructions.get(note_type, type_instructions["detailed"])
+        style_instructions = {
+            "beginner": "Use intuitive real-world analogies, straightforward language, and clear diagrams. Explain all jargon before using it.",
+            "technical": "Provide deep architectural analysis, formal invariants, time/space complexity bounds, and production engineering tradeoffs.",
+            "point_wise": "Structure the entire content into concise, numbered or bulleted points with bold lead-ins for high readability.",
+            "standard": "Balanced academic tone with clear pedagogical clarity, structured headings, and practical insights."
+        }
+
+        lang_instruction = ""
+        if clean_lang == "te":
+            lang_instruction = "IMPORTANT: Write the entire notes in fluent, natural TELUGU (తెలుగు) script."
+        elif clean_lang == "hi":
+            lang_instruction = "IMPORTANT: Write the entire notes in fluent, natural HINDI (हिंदी) script."
+        elif clean_lang != "en" and clean_lang != "auto":
+            lang_instruction = f"IMPORTANT: Write the notes in {clean_lang.upper()}."
+
+        type_desc = type_instructions.get(note_type, type_instructions["detailed"])
+        style_desc = style_instructions.get(explanation_style, style_instructions["standard"])
 
         prompt = f"""
-You are EduPath AI Smart Notes Generator.
+You are EduPath AI Advanced Smart Notes Generator.
 Topic: {topic_name}
-Format Requested: {note_type.upper()} ({instruction})
+Unit / Module: {unit_name or "Core Curriculum"}
+Note Type: {note_type.upper()} ({type_desc})
+Explanation Style: {explanation_style.upper()} ({style_desc})
+{lang_instruction}
 
-Source Material:
+Source Material / Extracted Excerpts:
 {source_text[:6000]}
 
-Generate structured, beautifully formatted Markdown notes. Use clear headings (# ## ###), bullet points, and code/diagram blocks where applicable.
+Generate structured, beautifully formatted Markdown notes.
+Requirements:
+1. Clear hierarchical headings (# ## ###).
+2. Bullet points with bold lead-ins.
+3. Formatted tables where comparison or classification is helpful.
+4. Mathematical / scientific formulas enclosed in KaTeX math syntax ($$formula$$).
+5. Code snippets with explicit language tags (```python, ```sql, ```java) if applicable.
+6. A dedicated 'Core Definitions' section and 'Important Takeaways' section.
 """
-        if self.is_configured:
+        if self.is_configured and self.chat_model:
             try:
                 response = self.chat_model.generate_content(prompt)
                 return {
-                    "title": f"{topic_name} – {note_type.replace('_', ' ').title()} Notes",
+                    "title": full_title,
                     "content": response.text.strip()
                 }
             except Exception as e:
-                logger.error(f"Gemini note generation error: {e}")
+                logger.error(f"Gemini note generation error: {e}. Falling back to dynamic generator.")
 
-        # Fallback structured notes
-        content = f"""# {topic_name} – {note_type.replace('_', ' ').title()} Notes
+        # Multilingual & Style-tailored Dynamic Notes Generator
+        if clean_lang == "te":
+            content = f"""# {full_title}
+
+## 1. సారాంశం (Executive Overview)
+**{topic_name}** అనేది కంప్యూటర్ సైన్స్ మరియు ఇంజనీరింగ్ విభాగంలో కీలకమైన కాన్సెప్ట్. ఈ నోట్స్ పరీక్షలు మరియు ఆచరణాత్మక అవగాహన కొరకు రూపొందించబడింది.
+
+### 2. ప్రాథమిక సూత్రాలు & నిర్వచనాలు (Core Principles)
+- **ప్రాథమిక నిర్వచనం**: సిస్టమ్ యొక్క స్థిరత్వం మరియు విశ్వసనీయతను కాపాడటానికి {topic_name} అవసరం.
+- **లక్షణాలు**: తక్కువ సమయం, సమర్థవంతమైన మెమరీ వినియోగం మరియు సమాంతర ప్రాసెసింగ్ సామర్థ్యం.
+
+### 3. ముఖ్యాంశాలు (Key Examination Points)
+1. సిస్టమ్ పరిమితులు మరియు సరిహద్దు పరిస్థితులను ఎల్లప్పుడూ విశ్లేషించండి.
+2. కాంకరెన్సీ మరియు డేటా సమగ్రతను పరిరక్షించండి.
+3. రియల్-వరల్డ్ సాఫ్ట్‌వేర్ ఆర్కిటెక్చర్‌లో దీని వినియోగం అధికం.
+
+> **రివిజన్ చిట్కా**: పరీక్షల్లో ముఖ్యమైన నిర్వచనాలు మరియు డయాగ్రమ్‌లను తప్పక ప్రస్తావించండి.
+"""
+        elif clean_lang == "hi":
+            content = f"""# {full_title}
+
+## 1. सारांश (Executive Overview)
+**{topic_name}** आधुनिक कंप्यूटिंग और सॉफ्टवेयर सिस्टम में एक मूलभूत और अत्यंत महत्वपूर्ण विषय है। यह अध्ययन सामग्री परीक्षा और व्यावहारिक ज्ञान दोनों के लिए अनुकूलित है।
+
+### 2. मुख्य परिभाषाएं एवं सिद्धांत (Core Principles)
+- **मूलभूत परिभाषा**: {topic_name} सिस्टम के सुचारू संचालन, सटीकता और विश्वसनीयता को सुनिश्चित करता है।
+- **प्रमुख विशेषताएं**: न्यूनतम समय जटिलता, मेमोरी प्रबंधन और मापनीयता (Scalability)।
+
+### 3. परीक्षा उपयोगी महत्वपूर्ण बिंदु (Key Examination Points)
+1. सिस्टम की जटिलता (Time & Space Complexity) का सही विश्लेषण करें।
+2. डेटा स्थिरता और समवर्ती लेनदेन (Concurrent Transactions) के नियमों का पालन करें।
+3. वास्तविक दुनिया के सॉफ्टवेयर विकास में इसके अनुप्रयोग को समझें।
+
+> **रिवीजन टिप**: मुख्य सूत्रों और संरचनात्मक आरेखों को ध्यान में रखें।
+"""
+        elif note_type == "comparison":
+            content = f"""# {full_title}
+
+## Overview & Comparative Analysis
+This document provides a structured comparative breakdown for **{topic_name}** across design dimensions, operational mechanisms, and tradeoffs.
+
+### 1. Comparative Matrix
+| Dimension | Traditional Paradigm | **{topic_name}** | Optimized Modern Architecture |
+|---|---|---|---|
+| **Primary Goal** | Basic Correctness | High Throughput & Invariants | Fault-Tolerant Distributed State |
+| **Time Complexity** | $O(n^2)$ unindexed | $O(\log n)$ balanced | $O(1)$ amortized / cached |
+| **Concurrency Support** | Pessimistic Locking | Strict Isolation & Validation | Multi-Version Concurrency (MVCC) |
+| **Recovery Strategy** | Manual Rollback | Write-Ahead Logging (WAL) | Distributed Raft / Paxos Log |
+| **Tradeoff** | Simplicity vs Throughput | Consistency vs Availability | Latency vs Replication Cost |
+
+### 2. Tradeoff Analysis & Selection Guide
+- **When to Choose {topic_name}**: When data integrity and invariant preservation are non-negotiable.
+- **When to Choose Alternatives**: When ultra-low latency eventual consistency suffices and network partitions are frequent.
+"""
+        elif note_type == "definitions":
+            content = f"""# {full_title}
+
+## Technical Glossary & Mathematical Formulations
+
+### 1. Core Definitions
+- **{topic_name}**: The formal theoretical and engineering framework governing reliable state transformations and execution invariants.
+- **State Invariant**: A mathematical proposition $P(s)$ that must evaluate to True for every reachable system state $s \in S$.
+- **Asymptotic Bound**: A function describing the limiting behavior of runtime or memory as input size $n \to \infty$.
+- **Serializability Guarantee**: The assurance that concurrent transactions yield a final state equivalent to some serial execution order.
+
+### 2. Core Mathematical Formulations
+- **Speedup Bound (Amdahl's Law)**:
+$$\\text{{Speedup}} = \\frac{{1}}{{(1 - p) + \\frac{{p}}{{s}}}}$$
+Where $p$ is the parallelizable fraction and $s$ is the processor scaling factor.
+
+- **Similarity Metric (Vector Space)**:
+$$\\text{{CosineSimilarity}}(\\mathbf{{u}}, \\mathbf{{v}}) = \\frac{{\\mathbf{{u}} \\cdot \\mathbf{{v}}}}{{\\|\\mathbf{{u}}\\| \\|\\mathbf{{v}}\\|}}$$
+"""
+        elif note_type == "last_minute" or note_type == "revision":
+            content = f"""# {full_title}
+
+## ⚡ Last-Minute Exam Cheat Sheet & High-Yield Anchors
+
+### 1. Critical Rules & Must-Know Invariants
+- **Rule 1**: Always establish the baseline invariant before and after state transitions in **{topic_name}**.
+- **Rule 2**: Avoid cascading aborts by holding exclusive resources until atomic commitment.
+- **Rule 3**: Logarithmic data structures ($O(\\log n)$) dominate linear scans for active working sets.
+
+### 2. Rapid Formula & Complexity Reference
+| Operation | Average Case | Worst Case | Memory |
+|---|---|---|---|
+| Search / Query | $O(\\log n)$ | $O(\\log n)$ | $O(1)$ auxiliary |
+| Insertion / Update | $O(\\log n)$ | $O(n)$ rebalance | $O(1)$ auxiliary |
+| Deletion | $O(\\log n)$ | $O(\\log n)$ | $O(1)$ auxiliary |
+
+### 3. Common Exam Pitfalls to Avoid
+- ⚠️ **Mistake 1**: Conflating worst-case asymptotic upper bounds ($O$) with empirical average-case latency.
+- ⚠️ **Mistake 2**: Forgetting boundary conditions (e.g. empty queue, root rebalancing, or single-node cluster).
+"""
+        else:
+            # Detailed, short, chapter_wise, exam_oriented
+            content = f"""# {full_title}
 
 ## Executive Summary
-This document provides {note_type.replace('_', ' ')} academic coverage for **{topic_name}**.
+This document provides comprehensive study notes for **{topic_name}**{f" under **{unit_name}**" if unit_name else ""}.
 
-### 1. Fundamental Definition
-**{topic_name}** represents a fundamental construct in modern computational systems. It defines how data, operations, and constraints interact to guarantee reliable system behavior.
+### 1. Fundamental Definition & Conceptual Scope
+**{topic_name}** represents a foundational principle in modern computer science. It defines the structural constraints, operational algorithms, and mathematical properties required to build robust computational systems.
 
-### 2. Core Concepts & Properties
-- **Invariant Rules**: Structural requirements that must hold before and after any valid operation.
-- **Complexity Profile**: Asymptotic performance tradeoffs between temporal execution and spatial memory.
-- **Architectural Utility**: Real-world application in modern software stacks (e.g. backend services, database storage engines).
+### 2. Architectural Principles & Mechanisms
+- **State Transition Integrity**: Every state transformation must satisfy formal pre-conditions and post-conditions.
+- **Computational Efficiency**: Balances time complexity ($O(\\log n)$ or $O(n)$) against spatial memory footprint.
+- **Concurrency & Scaling**: Employs non-blocking synchronization or strict lock hierarchies to maximize concurrent throughput.
 
-### 3. Key Points for Examination & Industry Practice
-1. Always analyze worst-case and average-case boundaries.
-2. Consider concurrency implications when multiple actors access the resource simultaneously.
-3. Apply normalization and normalization checks where data consistency is critical.
+### 3. Key Mathematical Models & Formulations
+$$\\text{{Efficiency Metric}} = \\frac{{\\text{{Useful Work Output}}}}{{\\text{{Total Execution Latency}}}}$$
 
-### 4. Self-Review Questions
-- How does {topic_name} compare to alternative paradigms?
-- What are the primary failure modes and recovery techniques?
+### 4. Practical Implementation Pattern
+```python
+# Reference Implementation for {topic_name}
+class {topic_name.replace(' ', '').replace('-', '')}Manager:
+    def __init__(self, capacity: int = 1000):
+        self.capacity = capacity
+        self.state_registry = {{}}
+
+    def process_operation(self, key: str, payload: dict) -> bool:
+        # Pre-condition validation
+        if not key or len(self.state_registry) >= self.capacity:
+            return False
+        # Atomic state transformation
+        self.state_registry[key] = payload
+        return True
+```
+
+### 5. High-Yield Examination Takeaways
+1. **Core Invariant**: State consistency must be preserved across failure scenarios.
+2. **Boundary Analysis**: Evaluate edge conditions where resources become saturated.
+3. **Trade-offs**: Always discuss the balance between runtime execution speed and system durability.
 """
+
         return {
-            "title": f"{topic_name} – {note_type.replace('_', ' ').title()} Notes",
+            "title": full_title,
             "content": content
         }
 

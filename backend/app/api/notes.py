@@ -39,11 +39,15 @@ async def generate_smart_notes(
     result = await gemini_service.generate_notes(
         source_text=source_text,
         note_type=req.note_type,
-        topic_name=topic_name
+        topic_name=topic_name,
+        explanation_style=req.explanation_style or "standard",
+        language=req.language or "en",
+        unit_name=req.unit_name
     )
 
     note = Note(
         user_id=current_user.id,
+        subject_id=req.subject_id,
         document_id=req.document_id,
         note_type=req.note_type,
         title=result["title"],
@@ -79,12 +83,19 @@ async def create_note(
 @router.get("", response_model=List[NoteResponse])
 async def list_notes(
     note_type: Optional[str] = None,
+    subject_id: Optional[str] = None,
+    search: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db)
 ):
     stmt = select(Note).where(Note.user_id == current_user.id)
-    if note_type:
+    if note_type and note_type != "all":
         stmt = stmt.where(Note.note_type == note_type)
+    if subject_id and subject_id != "all":
+        stmt = stmt.where(Note.subject_id == subject_id)
+    if search and search.strip():
+        term = f"%{search.strip()}%"
+        stmt = stmt.where((Note.title.ilike(term)) | (Note.content_markdown.ilike(term)))
     stmt = stmt.order_by(Note.is_pinned.desc(), Note.updated_at.desc())
     res = await session.execute(stmt)
     notes = res.scalars().all()

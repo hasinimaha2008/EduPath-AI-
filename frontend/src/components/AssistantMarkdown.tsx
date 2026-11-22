@@ -238,6 +238,46 @@ export function AssistantMarkdown({ content, className = "" }: AssistantMarkdown
         continue;
       }
 
+      // 1.5 Display Math Block ($$...$$ or \[...\])
+      if (line.trim().startsWith("$$") || line.trim().startsWith("\\[")) {
+        const mathLines: string[] = [];
+        let singleLine = false;
+
+        if (line.trim().startsWith("$$") && line.trim().endsWith("$$") && line.trim().length > 2) {
+          mathLines.push(line.trim().slice(2, -2).trim());
+          singleLine = true;
+          i++;
+        } else if (line.trim().startsWith("\\[") && line.trim().endsWith("\\]") && line.trim().length > 2) {
+          mathLines.push(line.trim().slice(2, -2).trim());
+          singleLine = true;
+          i++;
+        }
+
+        if (!singleLine) {
+          if (line.trim().startsWith("$$")) mathLines.push(line.trim().slice(2));
+          else if (line.trim().startsWith("\\[")) mathLines.push(line.trim().slice(2));
+          i++;
+          while (i < lines.length && !lines[i].trim().endsWith("$$") && !lines[i].trim().endsWith("\\]")) {
+            mathLines.push(lines[i]);
+            i++;
+          }
+          if (i < lines.length) {
+            const lastL = lines[i].trim().replace(/\$\$$|\\\]$/, "");
+            if (lastL) mathLines.push(lastL);
+            i++;
+          }
+        }
+
+        blocks.push(
+          <div key={`math-${blocks.length}`} className="my-3 py-3 px-4 rounded-xl bg-[#150B22] border border-[#3E225C] overflow-x-auto text-center shadow-inner">
+            <span className="font-mono text-xs sm:text-sm text-[#F472B6] tracking-wide inline-block leading-relaxed">
+              {mathLines.join("\n").trim()}
+            </span>
+          </div>
+        );
+        continue;
+      }
+
       // 2. Markdown Table Detection (| col1 | col2 |)
       if (line.trim().startsWith("|") && line.trim().endsWith("|") && lines[i + 1]?.trim().startsWith("|")) {
         const tableLines: string[] = [];

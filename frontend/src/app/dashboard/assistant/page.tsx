@@ -49,6 +49,7 @@ export default function StudyAssistantPage() {
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [lastFailedQuestion, setLastFailedQuestion] = useState<string | null>(null);
 
   // State: Speech Recognition
   const [isListening, setIsListening] = useState(false);
@@ -130,8 +131,10 @@ export default function StudyAssistantPage() {
   // 4. Load Conversation
   const loadConversation = async (convId: string) => {
     try {
+      if (isStreaming) handleStopGeneration();
       setActiveConversationId(convId);
       setError(null);
+      setLastFailedQuestion(null);
       const conv = await api.getConversation(convId);
       setMessages(conv.messages || []);
       if (conv.subject_id) setSelectedSubjectId(conv.subject_id);
@@ -149,21 +152,17 @@ export default function StudyAssistantPage() {
     setMessages([]);
     setInputQuestion("");
     setError(null);
+    setLastFailedQuestion(null);
     if (textareaRef.current) {
       textareaRef.current.focus();
     }
   };
 
-  // 6. Real-time Streaming Send Question
-  const handleSend = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!inputQuestion.trim() || loading || isStreaming) return;
+  // 6. Real-time Streaming Send Question Logic
+  const sendQuestion = async (questionText: string) => {
+    const question = questionText.trim();
+    if (!question || loading || isStreaming) return;
 
-    const question = inputQuestion.trim();
-    setInputQuestion("");
-    if (textareaRef.current) {
-      textareaRef.current.style.height = "auto";
-    }
     setError(null);
     setLoading(true);
     setIsStreaming(true);
@@ -222,6 +221,7 @@ export default function StudyAssistantPage() {
           onDone: (doneData) => {
             setIsStreaming(false);
             setLoading(false);
+            setLastFailedQuestion(null);
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === tempAssistantMsgId ? doneData.assistant_message : m
@@ -234,6 +234,7 @@ export default function StudyAssistantPage() {
             setIsStreaming(false);
             setLoading(false);
             setError(errMsg || "Streaming connection interrupted.");
+            setLastFailedQuestion(question);
           },
         },
         abortCtrl.signal
@@ -241,12 +242,38 @@ export default function StudyAssistantPage() {
     } catch (err: any) {
       if (err.name !== "AbortError") {
         setError(err.message || "Failed to receive response from AI Assistant.");
+        setLastFailedQuestion(question);
       }
     } finally {
       setIsStreaming(false);
       setLoading(false);
       abortControllerRef.current = null;
     }
+  };
+
+  const handleSend = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!inputQuestion.trim() || loading || isStreaming) return;
+
+    const question = inputQuestion.trim();
+    setInputQuestion("");
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+    }
+    await sendQuestion(question);
+  };
+
+  // 7. Retry Failed Message
+  const handleRetry = async () => {
+    if (!lastFailedQuestion || loading || isStreaming) return;
+    const retryQuestion = lastFailedQuestion;
+    setLastFailedQuestion(null);
+    setError(null);
+    // Remove any empty dangling temp message
+    setMessages((prev) =>
+      prev.filter((m) => !m.id.startsWith("temp-assistant-") || m.content.trim().length > 0)
+    );
+    await sendQuestion(retryQuestion);
   };
 
   // 7. Stop Generation
@@ -909,12 +936,28 @@ export default function StudyAssistantPage() {
                 <AlertCircle className="w-4 h-4 shrink-0" />
                 <span>{error}</span>
               </div>
-              <button
-                onClick={() => setError(null)}
-                className="text-red-400 hover:text-white"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
+              <div className="flex items-center gap-2">
+                {lastFailedQuestion && (
+                  <button
+                    onClick={handleRetry}
+                    className="px-2.5 py-1 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-200 text-xs font-medium flex items-center gap-1.5 transition-colors"
+                    title="Retry sending message"
+                  >
+                    <RotateCw className="w-3 h-3" />
+                    Retry
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    setError(null);
+                    setLastFailedQuestion(null);
+                  }}
+                  className="text-red-400 hover:text-white"
+                  title="Dismiss error"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
           </div>
         )}

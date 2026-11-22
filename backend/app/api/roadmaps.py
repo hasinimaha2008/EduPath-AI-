@@ -67,28 +67,76 @@ async def generate_career_roadmap(
     # Generate structured milestones validated against requirements
     milestone_templates = [
         {
-            "title": f"Phase 1: Academic & Theoretical Core ({role.title})",
-            "desc": "Establish rigorous conceptual foundation in core algorithmic invariants and data structures.",
-            "projects": ["Build CLI-based Data Structure benchmark suite", "Implement foundational state machine and validation parser"],
-            "activities": ["Study lecture notes on Big-O complexity", "Complete 5 topic quizzes with >= 80% accuracy"]
+            "stage": "beginner",
+            "title": f"Beginner Stage: Academic & Theoretical Core ({role.title})",
+            "desc": "Establish a rigorous conceptual foundation in core algorithmic invariants, computational thinking, and foundational syntax.",
+            "projects": [
+                f"Build a CLI-based {role.title} Fundamentals benchmark suite",
+                "Implement foundational state machines, data validation parsers, and unit tests"
+            ],
+            "resources": [
+                f"Curated Textbooks on Algorithms & {role.title} Core Axioms",
+                "Official Language / Framework Documentation & Reference Manuals",
+                "EduPath AI Smart Notes & Interactive Topic Revision Cards"
+            ],
+            "activities": [
+                "Study lecture notes on Big-O computational complexity",
+                "Complete 5 topic quizzes with >= 80% accuracy"
+            ]
         },
         {
-            "title": f"Phase 2: Database Systems & API Integration",
-            "desc": "Master schema normalization (3NF/BCNF), SQL optimization, and robust REST architectural patterns.",
-            "projects": ["Design e-commerce normalized PostgreSQL relational schema", "Construct secure JWT-authenticated REST API with FastAPI"],
-            "activities": ["Analyze slow queries with EXPLAIN ANALYZE", "Practice ACID transaction concurrency control"]
+            "stage": "intermediate",
+            "title": f"Intermediate Stage: Systems Design, Data Architecture & APIs",
+            "desc": "Master schema normalization (3NF/BCNF), query optimization, and robust RESTful API microservice architectural patterns.",
+            "projects": [
+                "Design a normalized PostgreSQL relational schema with composite constraints",
+                "Construct a secure JWT-authenticated RESTful API with automated validation"
+            ],
+            "resources": [
+                "High Performance Database Systems & Schema Design Patterns",
+                "RESTful API & Distributed Microservice Engineering Specifications",
+                "EduPath AI Smart Notes: Schema Optimization & API Security"
+            ],
+            "activities": [
+                "Analyze slow queries using EXPLAIN ANALYZE and compound indexes",
+                "Practice ACID transaction concurrency control and deadlock resolution"
+            ]
         },
         {
-            "title": f"Phase 3: Production Engineering & Ecosystem Tools",
-            "desc": "Implement testing suites, CI/CD automation, asynchronous I/O, and containerized deployment.",
-            "projects": ["Develop production microservice with automated unit tests", "Configure Dockerized multi-stage container deployment"],
-            "activities": ["Conduct vulnerability audit and rate limiting tests", "Benchmark async throughput under load"]
+            "stage": "advanced",
+            "title": f"Advanced Stage: Production Engineering, Cloud Scaling & Security",
+            "desc": "Implement automated testing suites, CI/CD pipelines, asynchronous concurrency, and containerized deployment.",
+            "projects": [
+                "Develop a high-throughput async microservice with automated integration tests",
+                "Configure a containerized multi-stage Docker & Kubernetes deployment"
+            ],
+            "resources": [
+                "The Site Reliability Workbook & Cloud Production Engineering Guides",
+                "OWASP Top 10 Security Architecture & Zero-Trust Verification Specs",
+                "EduPath AI Smart Notes: Asynchronous Concurrency & Cloud DevOps"
+            ],
+            "activities": [
+                "Conduct vulnerability audits and rate-limiting stress tests",
+                "Benchmark asynchronous system throughput under simulated peak load"
+            ]
         },
         {
-            "title": f"Phase 4: Capstone Industry Portfolio Project",
-            "desc": "Architect an end-to-end full-stack portfolio system showcasing demonstrated technical excellence.",
-            "projects": [f"Complete flagship {role.title} Capstone Platform", "Publish technical architecture writeup with benchmarks"],
-            "activities": ["Perform peer code reviews", "Conduct mock technical interview sessions"]
+            "stage": "capstone",
+            "title": f"Capstone Stage: Flagship Industry Portfolio System",
+            "desc": "Architect an end-to-end full-stack portfolio system showcasing demonstrated technical excellence and production readiness.",
+            "projects": [
+                f"Complete the flagship {role.title} Capstone Platform",
+                "Publish a comprehensive technical architecture writeup with live benchmarks and Git repo"
+            ],
+            "resources": [
+                "Production Architecture Review Checklists & Clean Code Guidelines",
+                "Open-Source Contribution Guidelines & System Design Interview Handbooks",
+                "EduPath AI Career Project Blueprint & Review Rubric"
+            ],
+            "activities": [
+                "Perform peer code reviews and architectural defense walkthroughs",
+                "Conduct mock technical interview sessions and live debugging drills"
+            ]
         }
     ]
 
@@ -105,7 +153,7 @@ async def generate_career_roadmap(
             practice_activities_json=json.dumps(tmpl["activities"])
         )
         session.add(m)
-        milestones_created.append(m)
+        milestones_created.append((m, tmpl["stage"], tmpl["resources"]))
 
     await session.commit()
     await session.refresh(roadmap)
@@ -119,15 +167,17 @@ async def generate_career_roadmap(
         milestones=[
             RoadmapMilestoneResponse(
                 id=m.id,
+                stage=stage,
                 title=m.title,
                 description=m.description,
                 order_index=m.order_index,
                 is_completed=m.is_completed,
                 target_date=m.target_date,
                 suggested_projects=json.loads(m.suggested_projects_json or "[]"),
+                learning_resources=resources,
                 practice_activities=json.loads(m.practice_activities_json or "[]")
             )
-            for m in milestones_created
+            for m, stage, resources in milestones_created
         ],
         created_at=roadmap.created_at,
         updated_at=roadmap.updated_at
@@ -146,8 +196,59 @@ async def list_user_roadmaps(
     res = await session.execute(stmt)
     roadmaps = res.scalars().all()
 
+    stage_order = {1: "beginner", 2: "intermediate", 3: "advanced", 4: "capstone"}
+    stage_resources = {
+        "beginner": [
+            "Official Language / Framework Documentation & Reference Manuals",
+            "Curated Academic Textbooks on Foundational Invariants",
+            "EduPath AI Smart Notes & Interactive Practice Quizzes"
+        ],
+        "intermediate": [
+            "High Performance Database Systems & Schema Design Patterns",
+            "RESTful API & Distributed Microservice Engineering Specifications",
+            "EduPath AI Smart Notes: Normalization & Query Tuning"
+        ],
+        "advanced": [
+            "Site Reliability Engineering & Cloud Architecture Documentation",
+            "OWASP Top 10 Security Architecture & Zero-Trust Best Practices",
+            "EduPath AI Smart Notes: Production Scaling & CI/CD"
+        ],
+        "capstone": [
+            "Production Architecture Review Checklists & Git Repositories",
+            "System Design Case Studies & Technical Interview Handbooks",
+            "EduPath AI Career Project Blueprint & Review Rubric"
+        ]
+    }
+
     output = []
     for r in roadmaps:
+        milestone_responses = []
+        for m in r.milestones:
+            stage_name = stage_order.get(m.order_index, "intermediate")
+            if "beginner" in m.title.lower():
+                stage_name = "beginner"
+            elif "intermediate" in m.title.lower():
+                stage_name = "intermediate"
+            elif "advanced" in m.title.lower():
+                stage_name = "advanced"
+            elif "capstone" in m.title.lower():
+                stage_name = "capstone"
+
+            milestone_responses.append(
+                RoadmapMilestoneResponse(
+                    id=m.id,
+                    stage=stage_name,
+                    title=m.title,
+                    description=m.description,
+                    order_index=m.order_index,
+                    is_completed=m.is_completed,
+                    target_date=m.target_date,
+                    suggested_projects=json.loads(m.suggested_projects_json or "[]"),
+                    learning_resources=stage_resources.get(stage_name, []),
+                    practice_activities=json.loads(m.practice_activities_json or "[]")
+                )
+            )
+
         output.append(
             CareerRoadmapResponse(
                 id=r.id,
@@ -155,19 +256,7 @@ async def list_user_roadmaps(
                 title=r.title,
                 target_timeline_months=r.target_timeline_months,
                 progress_percentage=r.progress_percentage,
-                milestones=[
-                    RoadmapMilestoneResponse(
-                        id=m.id,
-                        title=m.title,
-                        description=m.description,
-                        order_index=m.order_index,
-                        is_completed=m.is_completed,
-                        target_date=m.target_date,
-                        suggested_projects=json.loads(m.suggested_projects_json or "[]"),
-                        practice_activities=json.loads(m.practice_activities_json or "[]")
-                    )
-                    for m in r.milestones
-                ],
+                milestones=milestone_responses,
                 created_at=r.created_at,
                 updated_at=r.updated_at
             )

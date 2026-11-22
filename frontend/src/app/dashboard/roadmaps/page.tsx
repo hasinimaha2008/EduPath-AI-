@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import {
   Milestone,
   CheckCircle2,
@@ -11,7 +12,13 @@ import {
   FolderGit2,
   Compass,
   RotateCcw,
-  Clock
+  Clock,
+  BookOpen,
+  Target,
+  Award,
+  Layers,
+  ChevronRight,
+  Bookmark
 } from "lucide-react";
 import { GlowCard } from "@/components/GlowCard";
 import { api } from "@/lib/api";
@@ -39,13 +46,18 @@ function CareerRoadmapsContent() {
 
         if (initialRoleId) {
           const match = existingRoadmaps.find((r) => r.career_role.id === initialRoleId);
-          if (match) setActiveRoadmap(match);
+          if (match) {
+            setActiveRoadmap(match);
+          } else {
+            handleAutoGenerate(initialRoleId);
+          }
           setSelectedRoleId(initialRoleId);
         } else if (existingRoadmaps.length > 0) {
           setActiveRoadmap(existingRoadmaps[0]);
           setSelectedRoleId(existingRoadmaps[0].career_role.id);
         } else if (rolesList.length > 0) {
           setSelectedRoleId(rolesList[0].id);
+          handleAutoGenerate(rolesList[0].id);
         }
       } catch (e) {
         console.error("Error initializing roadmaps:", e);
@@ -53,6 +65,19 @@ function CareerRoadmapsContent() {
     }
     init();
   }, [initialRoleId]);
+
+  const handleAutoGenerate = async (roleId: string) => {
+    try {
+      setGenerating(true);
+      const newRm = await api.generateRoadmap(roleId, 6);
+      setActiveRoadmap(newRm);
+      setRoadmaps((prev) => [newRm, ...prev.filter((r) => r.id !== newRm.id)]);
+    } catch (e) {
+      console.error("Error auto-generating roadmap:", e);
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   const handleGenerateRoadmap = async () => {
     if (!selectedRoleId) return;
@@ -86,29 +111,48 @@ function CareerRoadmapsContent() {
     }
   };
 
+  const getStageBadge = (stage?: string, orderIndex: number = 1) => {
+    const s = stage?.toLowerCase() || (orderIndex === 1 ? "beginner" : orderIndex === 2 ? "intermediate" : orderIndex === 3 ? "advanced" : "capstone");
+
+    switch (s) {
+      case "beginner":
+        return <span className="px-2.5 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[10px] font-bold">Beginner Stage</span>;
+      case "intermediate":
+        return <span className="px-2.5 py-0.5 rounded-full bg-[#8B5CF6]/20 text-[#C084FC] border border-[#8B5CF6]/30 text-[10px] font-bold">Intermediate Stage</span>;
+      case "advanced":
+        return <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold">Advanced Stage</span>;
+      default:
+        return <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-bold">Capstone Stage</span>;
+    }
+  };
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-12">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#30203F] pb-4">
         <div>
-          <h1 className="text-xl font-bold text-white flex items-center gap-2">
-            <Milestone className="w-5 h-5 text-[#C084FC]" /> Personalized Career Roadmap
+          <h1 className="text-xl sm:text-2xl font-bold text-white flex items-center gap-2">
+            <Milestone className="w-6 h-6 text-[#C084FC]" /> Personalized Career Roadmap
           </h1>
-          <p className="text-xs text-[#A1A1AA] mt-0.5">
-            Step-by-step phased learning milestones, portfolio projects, and practice activities validated by career skill requirements.
+          <p className="text-xs text-[#A1A1AA] mt-1">
+            Structured career roadmap with Beginner, Intermediate, Advanced, and Capstone stages. Includes practical projects and learning resources.
           </p>
         </div>
 
         {/* Career Selector & Action */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 self-start sm:self-auto">
           <select
             value={selectedRoleId}
             onChange={(e) => {
               setSelectedRoleId(e.target.value);
               const found = roadmaps.find((r) => r.career_role.id === e.target.value);
-              if (found) setActiveRoadmap(found);
+              if (found) {
+                setActiveRoadmap(found);
+              } else {
+                handleAutoGenerate(e.target.value);
+              }
             }}
-            className="px-3 py-1.5 rounded-lg bg-[#191225] border border-[#30203F] text-xs font-semibold text-white focus:outline-none focus:border-[#A855F7]"
+            className="px-3 py-2 rounded-lg bg-[#191225] border border-[#30203F] text-xs font-bold text-white focus:outline-none focus:border-[#A855F7]"
           >
             {roles.map((r) => (
               <option key={r.id} value={r.id}>
@@ -120,10 +164,10 @@ function CareerRoadmapsContent() {
           <button
             onClick={handleGenerateRoadmap}
             disabled={generating}
-            className="px-4 py-1.5 rounded-lg text-xs font-bold bg-gradient-to-r from-[#8B5CF6] to-[#A855F7] text-white shadow-[0_0_12px_rgba(168,85,247,0.3)] hover:shadow-[0_0_18px_rgba(168,85,247,0.6)] disabled:opacity-50 transition-all flex items-center gap-1.5 shrink-0"
+            className="px-4 py-2 rounded-lg text-xs font-bold bg-gradient-to-r from-[#8B5CF6] to-[#A855F7] text-white shadow-[0_0_12px_rgba(168,85,247,0.3)] hover:shadow-[0_0_18px_rgba(168,85,247,0.6)] disabled:opacity-50 transition-all flex items-center gap-1.5 shrink-0"
           >
             <Sparkles className="w-3.5 h-3.5" />
-            {generating ? "Generating..." : activeRoadmap ? "Regenerate" : "Generate"}
+            {generating ? "Generating..." : activeRoadmap ? "Regenerate Roadmap" : "Generate Roadmap"}
           </button>
         </div>
       </div>
@@ -137,15 +181,19 @@ function CareerRoadmapsContent() {
                 <span className="text-[10px] font-bold text-[#A855F7] uppercase tracking-wider">
                   Target Career Pathway
                 </span>
-                <h2 className="text-xl font-bold text-white mt-0.5">
+                <h2 className="text-xl sm:text-2xl font-bold text-white mt-0.5">
                   {activeRoadmap.title}
                 </h2>
                 <div className="flex items-center gap-3 text-xs text-[#A1A1AA] mt-1">
-                  <span className="flex items-center gap-1">
-                    <Clock className="w-3.5 h-3.5 text-[#C084FC]" /> {activeRoadmap.target_timeline_months} Months Target
+                  <span className="flex items-center gap-1 text-white font-medium">
+                    <Clock className="w-3.5 h-3.5 text-[#C084FC]" /> {activeRoadmap.target_timeline_months} Months Target Duration
                   </span>
                   <span>•</span>
                   <span>{activeRoadmap.milestones.length} Phased Milestones</span>
+                  <span>•</span>
+                  <span className="text-emerald-400 font-bold">
+                    {activeRoadmap.milestones.filter(m => m.is_completed).length} Completed
+                  </span>
                 </div>
               </div>
 
@@ -154,7 +202,7 @@ function CareerRoadmapsContent() {
                   {activeRoadmap.progress_percentage}%
                 </span>
                 <span className="text-xs text-[#C084FC] block font-semibold">
-                  Milestone Completion
+                  Milestone Progress
                 </span>
               </div>
             </div>
@@ -171,7 +219,7 @@ function CareerRoadmapsContent() {
 
           {/* Phased Milestones Timeline */}
           <div className="space-y-4">
-            <h3 className="text-base font-bold text-white">Learning Milestones & Actionable Projects</h3>
+            <h3 className="text-base font-bold text-white">Structured Learning Stages & Industry Milestones</h3>
             {activeRoadmap.milestones.map((m, idx) => (
               <GlowCard
                 key={m.id}
@@ -180,11 +228,11 @@ function CareerRoadmapsContent() {
                 }`}
               >
                 <div className="flex items-start justify-between gap-4">
-                  <div className="flex items-start gap-3">
+                  <div className="flex items-start gap-3.5">
                     <button
                       onClick={() => handleToggleMilestone(m.id)}
                       className="mt-0.5 shrink-0 text-[#A855F7] hover:scale-110 transition-transform"
-                      title={m.is_completed ? "Mark Incomplete" : "Mark Completed"}
+                      title={m.is_completed ? "Mark Incomplete" : "Mark Milestone Completed"}
                     >
                       {m.is_completed ? (
                         <CheckCircle2 className="w-6 h-6 text-emerald-400 fill-emerald-400/20" />
@@ -194,13 +242,16 @@ function CareerRoadmapsContent() {
                     </button>
 
                     <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-[#A855F7] uppercase">
-                          Phase {m.order_index}
-                        </span>
+                      <div className="flex flex-wrap items-center gap-2 mb-1">
+                        {getStageBadge(m.stage, m.order_index)}
                         {m.target_date && (
                           <span className="text-[10px] px-2 py-0.5 rounded bg-[#100B18] text-[#A1A1AA] border border-[#30203F]">
                             {m.target_date}
+                          </span>
+                        )}
+                        {m.is_completed && (
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
+                            Completed ✓
                           </span>
                         )}
                       </div>
@@ -211,41 +262,78 @@ function CareerRoadmapsContent() {
                       >
                         {m.title}
                       </h4>
-                      <p className="text-xs text-[#A1A1AA] mt-1 leading-relaxed">
+                      <p className="text-xs text-[#A1A1AA] mt-1 leading-relaxed max-w-3xl">
                         {m.description}
                       </p>
                     </div>
                   </div>
                 </div>
 
-                {/* Suggested Projects & Activities */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-5 pt-4 border-t border-[#30203F]">
+                {/* 3 Columns: Practical Projects, Learning Resources & Practice Activities */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-5 pt-4 border-t border-[#30203F]">
+                  {/* Practical Projects */}
                   <div className="p-3.5 rounded-lg bg-[#100B18] border border-[#30203F]">
                     <div className="text-xs font-bold text-[#C084FC] flex items-center gap-1.5 mb-2">
-                      <FolderGit2 className="w-3.5 h-3.5" /> Suggested Industry Projects:
+                      <FolderGit2 className="w-3.5 h-3.5" /> Practical Industry Projects:
                     </div>
                     <ul className="space-y-1.5 text-xs text-gray-300">
                       {m.suggested_projects.map((proj, pIdx) => (
                         <li key={pIdx} className="flex items-start gap-2">
                           <span className="text-[#A855F7]">•</span>
-                          <span>{proj}</span>
+                          <span className="leading-snug">{proj}</span>
                         </li>
                       ))}
                     </ul>
                   </div>
 
+                  {/* Learning Resources */}
+                  <div className="p-3.5 rounded-lg bg-[#100B18] border border-[#30203F]">
+                    <div className="text-xs font-bold text-purple-300 flex items-center gap-1.5 mb-2">
+                      <Bookmark className="w-3.5 h-3.5 text-purple-400" /> Recommended Learning Resources:
+                    </div>
+                    <ul className="space-y-1.5 text-xs text-gray-300">
+                      {(m.learning_resources && m.learning_resources.length > 0
+                        ? m.learning_resources
+                        : [
+                            "Official Architecture & Specification Documents",
+                            "Curated Academic Reference Textbooks",
+                            "EduPath AI Smart Notes & Revision Cards"
+                          ]
+                      ).map((res, rIdx) => (
+                        <li key={rIdx} className="flex items-start gap-2">
+                          <span className="text-purple-400">•</span>
+                          <span className="leading-snug">{res}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  {/* Practice Activities */}
                   <div className="p-3.5 rounded-lg bg-[#100B18] border border-[#30203F]">
                     <div className="text-xs font-bold text-emerald-300 flex items-center gap-1.5 mb-2">
-                      <CheckCircle2 className="w-3.5 h-3.5" /> Recommended Practice Activities:
+                      <CheckCircle2 className="w-3.5 h-3.5" /> Practice Drills & Assessments:
                     </div>
                     <ul className="space-y-1.5 text-xs text-gray-300">
                       {m.practice_activities.map((act, aIdx) => (
                         <li key={aIdx} className="flex items-start gap-2">
                           <span className="text-emerald-400">•</span>
-                          <span>{act}</span>
+                          <span className="leading-snug">{act}</span>
                         </li>
                       ))}
                     </ul>
+                  </div>
+                </div>
+
+                {/* Quick Link to Quizzes / Notes */}
+                <div className="mt-4 pt-3 border-t border-[#20152B] flex items-center justify-between text-xs">
+                  <span className="text-[#71717A]">Stage {m.order_index} of {activeRoadmap.milestones.length}</span>
+                  <div className="flex items-center gap-3">
+                    <Link href="/dashboard/notes" className="text-[#A1A1AA] hover:text-white flex items-center gap-1">
+                      <BookOpen className="w-3 h-3 text-[#C084FC]" /> Smart Notes
+                    </Link>
+                    <Link href="/dashboard/quiz" className="text-[#C084FC] hover:underline flex items-center gap-1 font-bold">
+                      <Target className="w-3 h-3" /> Practice Quiz
+                    </Link>
                   </div>
                 </div>
               </GlowCard>
@@ -253,21 +341,9 @@ function CareerRoadmapsContent() {
           </div>
         </div>
       ) : (
-        <GlowCard className="p-12 text-center">
-          <Milestone className="w-12 h-12 text-[#A1A1AA] mx-auto mb-3 opacity-50" />
-          <h3 className="text-sm font-bold text-white mb-1">No Roadmap Generated Yet</h3>
-          <p className="text-xs text-[#A1A1AA] max-w-sm mx-auto mb-4">
-            Select a career role above and click &ldquo;Generate&rdquo; to build your tailored milestone sequence.
-          </p>
-          <button
-            onClick={handleGenerateRoadmap}
-            disabled={generating}
-            className="px-5 py-2.5 rounded-lg text-xs font-bold bg-gradient-to-r from-[#8B5CF6] to-[#A855F7] text-white inline-flex items-center gap-2"
-          >
-            <Sparkles className="w-4 h-4" />
-            {generating ? "Generating..." : "Generate Career Roadmap"}
-          </button>
-        </GlowCard>
+        <div className="p-12 text-center text-xs text-[#A1A1AA]">
+          {generating ? "Generating structured career roadmap..." : "Select a career role to view or generate its phased roadmap."}
+        </div>
       )}
     </div>
   );
@@ -275,7 +351,7 @@ function CareerRoadmapsContent() {
 
 export default function CareerRoadmapsPage() {
   return (
-    <Suspense fallback={<div className="p-8 text-xs text-[#A1A1AA]">Loading career roadmaps...</div>}>
+    <Suspense fallback={<div className="p-8 text-xs text-[#A1A1AA]">Loading career roadmap...</div>}>
       <CareerRoadmapsContent />
     </Suspense>
   );

@@ -426,10 +426,25 @@ class EduPathIntelligenceEngine:
                 user_skill.evidence_notes = f"Updated via quiz evaluation in competency: {m.competency_name}"
                 user_skill.last_evaluated_at = datetime.now(timezone.utc)
 
+    ROLE_DOMAINS = {
+        "Python Developer": "Software Development",
+        "Backend Developer": "Software Development",
+        "Web Developer": "Web Development",
+        "Database Developer": "Data Systems & Architecture",
+        "Data Analyst": "Data Science",
+        "Data Scientist": "Data Science",
+        "Machine Learning Engineer": "Machine Learning",
+        "AI Engineer": "Artificial Intelligence",
+        "Cybersecurity Analyst": "Cybersecurity",
+        "Cloud Solutions Architect": "Cloud Computing"
+    }
+
     @staticmethod
     async def recalculate_career_intelligence(session: AsyncSession, user_id: str):
         """
-        Recalculates career role recommendations, skill gaps, and checks target career status (Workflow B).
+        Recalculates explainable career recommendations, skill gaps, and checks target career status.
+        Integrates student profile interests, preferred domains, projects, and clearly distinguishes
+        verified academic qualifications (quizzes) from self-reported skills.
         """
         roles_stmt = select(CareerRole)
         roles_res = await session.execute(roles_stmt)
@@ -443,11 +458,15 @@ class EduPathIntelligenceEngine:
         skills_res = await session.execute(skills_stmt)
         skills_dict = {s.id: s for s in skills_res.scalars().all()}
 
-        # Fetch user's target career from learning profile
+        # Fetch user's persistent learning profile
         lp_stmt = select(LearningProfile).where(LearningProfile.user_id == user_id).limit(1)
         lp_res = await session.execute(lp_stmt)
         lp = lp_res.scalars().first()
-        target_role_id = lp.target_career_id if lp else None
+
+        prefs = lp.preferences if lp else {}
+        interests = [str(i).lower() for i in prefs.get("interests", [])]
+        preferred_domains = [str(d).lower() for d in prefs.get("preferred_domains", [])]
+        career_goals = prefs.get("career_goals", "")
 
         for role in roles:
             req_stmt = select(CareerSkillRequirement).where(CareerSkillRequirement.career_role_id == role.id)
@@ -458,7 +477,8 @@ class EduPathIntelligenceEngine:
                 continue
 
             total_weight = 0.0
-            earned_weight = 0.0
+            demonstrated_weight = 0.0
+            self_reported_weight = 0.0
             matching_skills = []
             missing_skills = []
 
@@ -472,22 +492,29 @@ class EduPathIntelligenceEngine:
                 skill_name = skill_obj.name if skill_obj else "Unknown Skill"
 
                 if user_skill:
-                    user_prof = user_skill.proficiency_level
-                    earned_weight += min(user_prof, 100.0) * importance_multiplier
-                    if user_prof >= req.min_proficiency:
-                        matching_skills.append(skill_name)
+                    user_prof = min(user_skill.proficiency_level, 100.0)
+                    if user_skill.source == "demonstrated":
+                        demonstrated_weight += user_prof * importance_multiplier
                     else:
-                        missing_skills.append(f"{skill_name} ({user_prof}% / {req.min_proficiency}%)")
+                        self_reported_weight += user_prof * importance_multiplier
+
+                    if user_prof >= req.min_proficiency:
+                        tag = " (Verified)" if user_skill.source == "demonstrated" else " (Self-Reported)"
+                        matching_skills.append(f"{skill_name}{tag}")
+                    else:
+                        missing_skills.append(f"{skill_name} ({round(user_prof, 1)}% / {round(req.min_proficiency, 1)}%)")
                 else:
                     missing_skills.append(skill_name)
 
                 # Upsert Skill Gap
                 status = "missing"
+                evidence_source = "missing"
                 if user_skill:
                     status = "existing" if user_skill.proficiency_level >= req.min_proficiency else "needs_improvement"
+                    evidence_source = user_skill.source
 
-                priority = "High" if req.importance_level == "Core" and status != "existing" else "Medium"
-                rec_text = f"Study foundational modules and practice quizzes for {skill_name} to meet {role.title} standards."
+                priority = "High" if req.importance_level == "Core" and status != "existing" else ("Medium" if status != "existing" else "Low")
+                rec_text = f"Study foundational modules and complete topic quizzes for {skill_name} to satisfy {role.title} industry benchmarks."
 
                 sg_stmt = select(SkillGap).where(
                     SkillGap.user_id == user_id,
@@ -512,12 +539,28 @@ class EduPathIntelligenceEngine:
                     sg.priority = priority
                     sg.learning_recommendation = rec_text
 
-            match_score = round((earned_weight / total_weight) * 100.0, 1) if total_weight > 0 else 0.0
+            role_domain = EduPathIntelligenceEngine.ROLE_DOMAINS.get(role.title, "Technology")
+
+            # Domain alignment bonus (up to 8%)
+            domain_bonus = 0.0
+            if any(role_domain.lower() in pd or pd in role_domain.lower() for pd in preferred_domains):
+                domain_bonus += 5.0
+            if any(any(w in role.title.lower() for w in i.split()) for i in interests):
+                domain_bonus += 3.0
+
+            demonstrated_score = round((demonstrated_weight / total_weight) * 100.0, 1) if total_weight > 0 else 0.0
+            base_score = round(((demonstrated_weight + self_reported_weight) / total_weight) * 100.0, 1) if total_weight > 0 else 0.0
+            match_score = round(min(100.0, base_score + domain_bonus), 1)
+
+            # Explainable Rationale
+            domain_note = f" Matches your preferred domain of '{role_domain}'." if domain_bonus > 0 else ""
+            goal_note = f" Directly aligns with your stated goal: '{career_goals}'." if career_goals else ""
 
             rationale = (
-                f"Calculated readiness of {match_score}% based on your academic quiz assessments. "
-                f"You have demonstrated {len(matching_skills)} required competencies, with {len(missing_skills)} "
-                f"priority skill gaps identified for target role readiness."
+                f"Calculated readiness of {match_score}% (Demonstrated Academic Accuracy: {demonstrated_score}% across quizzes; "
+                f"Self-Reported/Curriculum Match: {base_score}%).{domain_note}{goal_note} "
+                f"You have demonstrated proficiency in {len(matching_skills)} competencies, with {len(missing_skills)} "
+                f"key skill gaps identified for target role standards."
             )
 
             rec_stmt = select(CareerRecommendation).where(
@@ -595,8 +638,50 @@ class EduPathIntelligenceEngine:
             profile.daily_goal_minutes = int(updates["daily_goal_minutes"])
         if "target_career_id" in updates:
             profile.target_career_id = updates["target_career_id"]
+
+        current_prefs = profile.preferences
+        prefs_modified = False
+
+        for k in ["interests", "preferred_domains", "career_goals", "self_reported_skills", "projects_and_experience"]:
+            if k in updates and updates[k] is not None:
+                current_prefs[k] = updates[k]
+                prefs_modified = True
+
         if "learning_preferences" in updates and updates["learning_preferences"]:
-            profile.learning_preferences_json = json.dumps(updates["learning_preferences"])
+            current_prefs.update(updates["learning_preferences"])
+            prefs_modified = True
+
+        if prefs_modified:
+            profile.learning_preferences_json = json.dumps(current_prefs)
+
+        # Synchronize self-reported skills into UserSkill records
+        if "self_reported_skills" in updates and isinstance(updates["self_reported_skills"], list):
+            skills_stmt = select(Skill)
+            skills_res = await session.execute(skills_stmt)
+            all_skills = skills_res.scalars().all()
+            skill_name_to_obj = {s.name.lower(): s for s in all_skills}
+
+            for sr_skill in updates["self_reported_skills"]:
+                s_obj = skill_name_to_obj.get(sr_skill.strip().lower())
+                if s_obj:
+                    us_stmt = select(UserSkill).where(
+                        UserSkill.user_id == user_id,
+                        UserSkill.skill_id == s_obj.id
+                    ).limit(1)
+                    us_res = await session.execute(us_stmt)
+                    existing_us = us_res.scalars().first()
+
+                    if not existing_us:
+                        new_us = UserSkill(
+                            user_id=user_id,
+                            skill_id=s_obj.id,
+                            proficiency_level=75.0,
+                            source="self_reported",
+                            evidence_notes="Self-reported qualification in student profile",
+                            verified=False,
+                            last_evaluated_at=datetime.now(timezone.utc)
+                        )
+                        session.add(new_us)
 
         profile.updated_at = datetime.now(timezone.utc)
 
@@ -614,6 +699,10 @@ class EduPathIntelligenceEngine:
                     action_url=f"/dashboard/careers"
                 )
                 session.add(notif)
+
+        await session.flush()
+        # Recalculate career recommendations with new profile inputs
+        await EduPathIntelligenceEngine.recalculate_career_intelligence(session, user_id)
 
         await session.commit()
         await session.refresh(profile)

@@ -247,16 +247,27 @@ export interface SubjectSkillMapping {
   competency_name: string;
   skill_name: string;
   career_role_title: string;
+  industry_application?: string;
+  practical_project_example?: string;
 }
 
 export interface CareerRecommendation {
   id: string;
   career_role: CareerRole;
+  domain?: string;
   match_score: number;
+  demonstrated_match_score?: number;
+  self_reported_match_score?: number;
   rationale: string;
   missing_skills_count: number;
   matching_skills: string[];
   missing_skills: string[];
+  recommended_projects?: Array<{
+    title: string;
+    objective: string;
+    difficulty: string;
+    tools: string[];
+  }>;
   recommended_at: string;
 }
 
@@ -267,7 +278,11 @@ export interface SkillGapItem {
   priority: "High" | "Medium" | "Low";
   proficiency: number;
   evidence_source: "demonstrated" | "self_reported" | "missing";
+  is_verified?: boolean;
   learning_recommendation?: string;
+  learning_resources?: string[];
+  suggested_projects?: string[];
+  job_market_importance?: string;
 }
 
 export interface SkillGapResponse {
@@ -276,14 +291,63 @@ export interface SkillGapResponse {
   gaps: SkillGapItem[];
 }
 
+export interface ProjectExperienceItem {
+  id?: string;
+  title: string;
+  description: string;
+  technologies: string[];
+  link?: string;
+}
+
+export interface StudentCareerProfile {
+  user_id: string;
+  full_name: string;
+  email: string;
+  interests: string[];
+  preferred_domains: string[];
+  career_goals?: string;
+  self_reported_skills: string[];
+  demonstrated_skills: Array<{
+    skill_name: string;
+    proficiency: number;
+    evidence_notes?: string;
+  }>;
+  projects_and_experience: ProjectExperienceItem[];
+  learning_progress: {
+    total_quizzes_attempted: number;
+    average_quiz_score: number;
+    study_hours: number;
+    mastered_topics_count: number;
+  };
+  target_career_id?: string;
+  target_career_title?: string;
+  preferred_language: string;
+  explanation_style: string;
+  daily_goal_minutes: number;
+}
+
+export interface StudentProfileUpdateRequest {
+  interests?: string[];
+  preferred_domains?: string[];
+  career_goals?: string;
+  self_reported_skills?: string[];
+  projects_and_experience?: ProjectExperienceItem[];
+  target_career_id?: string;
+  preferred_language?: string;
+  explanation_style?: string;
+  daily_goal_minutes?: number;
+}
+
 export interface RoadmapMilestone {
   id: string;
+  stage?: "beginner" | "intermediate" | "advanced" | "capstone" | string;
   title: string;
   description: string;
   order_index: number;
   is_completed: boolean;
   target_date?: string;
   suggested_projects: string[];
+  learning_resources?: string[];
   practice_activities: string[];
 }
 

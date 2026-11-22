@@ -6,7 +6,8 @@ import {
   VoiceInfo, VoiceChatRequest, VoiceChatResponse,
   LanguageInfo, LearningProfile, MistakeInsights, NotificationListResponse,
   TopicWorkspaceData, ExplanationModeResponse, CareerComparisonResponse,
-  CareerProjectItem, CareerPathwayItem
+  CareerProjectItem, CareerPathwayItem,
+  StudentCareerProfile, StudentProfileUpdateRequest
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
@@ -582,13 +583,24 @@ class ApiClient {
     });
   }
 
-  // --- Student Learning Profile (Upgrade 2) ---
+  // --- Student Learning Profile & Career Profile (Phase 6) ---
   async getLearningProfile(): Promise<LearningProfile> {
     return this.request<LearningProfile>("/api/profile/learning");
   }
 
   async updateLearningProfile(data: Partial<LearningProfile>): Promise<LearningProfile> {
     return this.request<LearningProfile>("/api/profile/learning", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getStudentCareerProfile(): Promise<StudentCareerProfile> {
+    return this.request<StudentCareerProfile>("/api/profile/student");
+  }
+
+  async updateStudentCareerProfile(data: StudentProfileUpdateRequest): Promise<StudentCareerProfile> {
+    return this.request<StudentCareerProfile>("/api/profile/student", {
       method: "PUT",
       body: JSON.stringify(data),
     });

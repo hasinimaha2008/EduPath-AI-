@@ -337,15 +337,21 @@ class SubjectSkillMappingResponse(BaseModel):
     competency_name: str
     skill_name: str
     career_role_title: str
+    industry_application: Optional[str] = None
+    practical_project_example: Optional[str] = None
 
 class CareerRecommendationResponse(BaseModel):
     id: str
     career_role: CareerRoleResponse
+    domain: str = "Technology"
     match_score: float
+    demonstrated_match_score: float = 0.0
+    self_reported_match_score: float = 0.0
     rationale: str
     missing_skills_count: int
     matching_skills: List[str]
     missing_skills: List[str]
+    recommended_projects: List[Dict[str, Any]] = []
     recommended_at: datetime
 
 class SkillGapItem(BaseModel):
@@ -355,22 +361,64 @@ class SkillGapItem(BaseModel):
     priority: str  # High, Medium, Low
     proficiency: float
     evidence_source: str  # demonstrated, self_reported, missing
+    is_verified: bool = False
     learning_recommendation: Optional[str] = None
+    learning_resources: List[str] = []
+    suggested_projects: List[str] = []
+    job_market_importance: str = "Essential Core"
 
 class SkillGapResponse(BaseModel):
     career_role: CareerRoleResponse
     overall_readiness: float
     gaps: List[SkillGapItem]
 
+# --- Student Profile Schemas (Phase 6) ---
+class ProjectExperienceItem(BaseModel):
+    id: Optional[str] = None
+    title: str
+    description: str
+    technologies: List[str] = []
+    link: Optional[str] = None
+
+class StudentCareerProfileResponse(BaseModel):
+    user_id: str
+    full_name: str
+    email: str
+    interests: List[str] = []
+    preferred_domains: List[str] = []
+    career_goals: Optional[Union[str, List[str]]] = None
+    self_reported_skills: List[str] = []
+    demonstrated_skills: List[Dict[str, Any]] = []
+    projects_and_experience: List[ProjectExperienceItem] = []
+    learning_progress: Dict[str, Any] = {}
+    target_career_id: Optional[str] = None
+    target_career_title: Optional[str] = None
+    preferred_language: str = "en"
+    explanation_style: str = "step_by_step"
+    daily_goal_minutes: int = 45
+
+class StudentProfileUpdateRequest(BaseModel):
+    interests: Optional[List[str]] = None
+    preferred_domains: Optional[List[str]] = None
+    career_goals: Optional[Union[str, List[str]]] = None
+    self_reported_skills: Optional[List[str]] = None
+    projects_and_experience: Optional[List[ProjectExperienceItem]] = None
+    target_career_id: Optional[str] = None
+    preferred_language: Optional[str] = None
+    explanation_style: Optional[str] = None
+    daily_goal_minutes: Optional[int] = None
+
 # --- Career Roadmap Schemas ---
 class RoadmapMilestoneResponse(BaseModel):
     id: str
+    stage: str = "intermediate"  # beginner, intermediate, advanced, capstone
     title: str
     description: str
     order_index: int
     is_completed: bool
     target_date: Optional[str] = None
     suggested_projects: List[str] = []
+    learning_resources: List[str] = []
     practice_activities: List[str] = []
 
 class CareerRoadmapResponse(BaseModel):

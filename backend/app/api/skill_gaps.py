@@ -39,20 +39,100 @@ async def get_skill_gaps_for_career(
     us_res = await session.execute(us_stmt)
     user_skills = {us.skill_id: us for us in us_res.scalars().all()}
 
+    SKILL_RESOURCES_MAP = {
+        "SQL Querying": [
+            "PostgreSQL Official Documentation (Query Planning & Window Functions)",
+            "Database System Concepts (Silberschatz, Korth, Sudarshan)",
+            "EduPath Smart Notes: SQL & Relational Queries"
+        ],
+        "Database Design & Normalization": [
+            "Fundamentals of Database Systems (Elmasri & Navathe)",
+            "ACM SIGMOD Papers on Relational Normalization",
+            "EduPath Smart Notes: Normalization (1NF to BCNF)"
+        ],
+        "Python Programming": [
+            "Fluent Python (Luciano Ramalho - O'Reilly)",
+            "Official Python 3.12 Asynchronous I/O Documentation",
+            "EduPath Smart Notes: Python Concurrency & Data Model"
+        ],
+        "Machine Learning & Predictive Modeling": [
+            "Pattern Recognition and Machine Learning (Christopher Bishop)",
+            "Scikit-Learn Comprehensive User Guide & API Reference",
+            "EduPath Smart Notes: Supervised & Unsupervised Learning"
+        ],
+        "Deep Learning & Transformers": [
+            "Deep Learning (Ian Goodfellow, Yoshua Bengio)",
+            "Hugging Face Transformers Architecture Documentation",
+            "EduPath Smart Notes: Neural Attention & Transformer Architectures"
+        ],
+        "Cloud Architecture & DevOps": [
+            "The Site Reliability Workbook (Betsy Beyer et al. - Google O'Reilly)",
+            "Kubernetes Official Production Best Practices & CNCF Specs",
+            "EduPath Smart Notes: Container Orchestration & CI/CD"
+        ],
+        "Cybersecurity & Defensive Controls": [
+            "OWASP Top 10 Web Application Security Risks Specification",
+            "NIST Cybersecurity Framework (CSF 2.0)",
+            "EduPath Smart Notes: Cryptography & Access Control"
+        ],
+        "Modern React & Web Engineering": [
+            "Official React 18 / Next.js 14 Documentation",
+            "Web Performance In Action & WCAG 2.2 Standards",
+            "EduPath Smart Notes: State Synchronization & Component Lifecycle"
+        ]
+    }
+
+    SKILL_PROJECTS_MAP = {
+        "SQL Querying": [
+            "Build an E-Commerce Analytics Dashboard with Window Functions & CTEs",
+            "Design Automated Query Profiling Pipeline with EXPLAIN ANALYZE"
+        ],
+        "Database Design & Normalization": [
+            "Architect a Normalized Multi-Tenant SaaS Relational Schema in 3NF",
+            "Implement Audit Logging with Foreign Key Cascade & Composite Keys"
+        ],
+        "Python Programming": [
+            "Develop an Async Job Queue Worker Pool with Redis Streams",
+            "Build a RESTful API Microservice with Pydantic & FastAPI"
+        ],
+        "Machine Learning & Predictive Modeling": [
+            "Train an Explainable Churn Prediction Pipeline with Scikit-learn",
+            "Build Automated Cross-Validation and Hyperparameter Tuning Service"
+        ],
+        "Deep Learning & Transformers": [
+            "Implement a Fine-Tuned Domain QA Transformer with PyTorch",
+            "Build a Hybrid RAG Retrieval Engine with Vector Similarity"
+        ],
+        "Cloud Architecture & DevOps": [
+            "Provision a Highly Available Kubernetes Cluster with Terraform",
+            "Set up GitOps Automated Delivery with ArgoCD & Prometheus Alerting"
+        ],
+        "Cybersecurity & Defensive Controls": [
+            "Build a Real-Time Packet Sniffer and Vulnerability Scanner with Scapy",
+            "Implement Zero-Trust JWT Authentication with Token Rotation"
+        ],
+        "Modern React & Web Engineering": [
+            "Build a Real-Time Collaborative Canvas with WebSockets & React 18",
+            "Construct a High-Performance Accessible Design System in Tailwind"
+        ]
+    }
+
     gap_items = []
     total_prof = 0.0
 
     for req, skill in requirements:
         user_skill = user_skills.get(skill.id)
-        
+        is_verified = False
+
         if user_skill:
             prof = user_skill.proficiency_level
             total_prof += min(prof, 100.0)
             status_val = "existing" if prof >= req.min_proficiency else "needs_improvement"
             evidence_source = user_skill.source  # "demonstrated" or "self_reported"
+            is_verified = (user_skill.source == "demonstrated")
             priority = "High" if (req.importance_level == "Core" and status_val != "existing") else "Medium"
             rec_text = (
-                f"Current verified score: {prof}%. Target threshold is {req.min_proficiency}%. "
+                f"Current {'verified assessment' if is_verified else 'self-reported'} score: {round(prof, 1)}%. Target threshold is {round(req.min_proficiency, 1)}%. "
                 f"Complete advanced topic quizzes in {skill.name} to reinforce demonstrated mastery."
             )
         else:
@@ -62,6 +142,17 @@ async def get_skill_gaps_for_career(
             priority = "High" if req.importance_level == "Core" else "Low"
             rec_text = f"Begin with fundamental study notes and beginner quizzes covering {skill.name} concepts."
 
+        resources = SKILL_RESOURCES_MAP.get(skill.name, [
+            f"Official Standard Documentation for {skill.name}",
+            f"ACM / IEEE Curated Textbooks on {skill.name}",
+            f"EduPath AI Smart Notes on {skill.name}"
+        ])
+        suggested_projects = SKILL_PROJECTS_MAP.get(skill.name, [
+            f"Hands-on Implementation Project showcasing {skill.name}",
+            f"Automated Testing and Benchmarking Suite for {skill.name}"
+        ])
+        job_market_importance = "Essential Core" if req.importance_level == "Core" else "Industry Recommended"
+
         gap_items.append(
             SkillGapItem(
                 skill_name=skill.name,
@@ -70,7 +161,11 @@ async def get_skill_gaps_for_career(
                 priority=priority,
                 proficiency=prof,
                 evidence_source=evidence_source,
-                learning_recommendation=rec_text
+                is_verified=is_verified,
+                learning_recommendation=rec_text,
+                learning_resources=resources,
+                suggested_projects=suggested_projects,
+                job_market_importance=job_market_importance
             )
         )
 

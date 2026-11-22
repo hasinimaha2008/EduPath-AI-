@@ -68,6 +68,22 @@ CAREER_ROLES = [
         "salary_range": "$90,000 - $140,000",
         "industry_demand": "Extremely High",
         "icon_name": "ShieldAlert"
+    },
+    {
+        "title": "Cloud Solutions Architect",
+        "slug": "cloud-solutions-architect",
+        "description": "Architects highly resilient multi-cloud infrastructures, Kubernetes container orchestration, serverless microservices, and automated GitOps CI/CD pipelines.",
+        "salary_range": "$120,000 - $185,000",
+        "industry_demand": "Extremely High",
+        "icon_name": "Cloud"
+    },
+    {
+        "title": "AI Engineer",
+        "slug": "ai-engineer",
+        "description": "Architects enterprise Generative AI systems, RAG retrieval pipelines, LLM fine-tuning, vector database indexing, and autonomous multi-agent workflows.",
+        "salary_range": "$125,000 - $190,000",
+        "industry_demand": "Extremely High",
+        "icon_name": "Brain"
     }
 ]
 
@@ -1298,6 +1314,22 @@ CAREER_SKILL_REQUIREMENTS = {
         ("Operating System Architecture", "Core", 75.0),
         ("Cloud Architecture & DevOps", "Secondary", 65.0),
         ("Python Programming", "Secondary", 60.0)
+    ],
+    "Cloud Solutions Architect": [
+        ("Cloud Architecture & DevOps", "Core", 85.0),
+        ("Operating System Architecture", "Core", 80.0),
+        ("Network Protocol Analysis", "Core", 75.0),
+        ("Software Architecture & Design Patterns", "Secondary", 70.0),
+        ("Cybersecurity & Defensive Controls", "Secondary", 65.0),
+        ("Python Programming", "Secondary", 60.0)
+    ],
+    "AI Engineer": [
+        ("Deep Learning & Transformers", "Core", 85.0),
+        ("Vector Database Architecture", "Core", 80.0),
+        ("Python Programming", "Core", 80.0),
+        ("Machine Learning & Predictive Modeling", "Core", 75.0),
+        ("Algorithms & Optimization", "Secondary", 70.0),
+        ("Cloud Architecture & DevOps", "Secondary", 65.0)
     ]
 }
 
@@ -1429,6 +1461,38 @@ CAREER_PROJECTS = [
         ],
         "expected_outcome": "A proactive security monitoring utility capable of detecting and classifying OWASP Top 10 exploits in real time.",
         "competency_focus": "Threat Hunting, Network Forensics & Defensive Hardening"
+    },
+    {
+        "career_role_title": "Cloud Solutions Architect",
+        "title": "Multi-Region Kubernetes Microservices & GitOps Platform",
+        "objective": "Architect high-availability infrastructure with Terraform, deploy resilient microservices on Kubernetes, and enforce zero-trust network policies.",
+        "difficulty": "Advanced",
+        "required_skills": ["Cloud Architecture & DevOps", "Operating System Architecture", "Network Protocol Analysis"],
+        "tools": ["Kubernetes", "Terraform", "Docker", "ArgoCD", "Prometheus & Grafana"],
+        "steps": [
+            "Write modular Terraform declarations provisioning multi-AZ VPC, subnets, and Kubernetes clusters.",
+            "Configure ingress controllers with automated TLS certificate issuance and rate-limiting middleware.",
+            "Deploy GitOps automated delivery pipeline using ArgoCD syncing application manifests from Git.",
+            "Implement Prometheus metrics collection and Grafana dashboards tracking cluster SLOs and latency."
+        ],
+        "expected_outcome": "A resilient multi-region cloud cluster demonstrating automated failover and 99.99% availability.",
+        "competency_focus": "Cloud Orchestration, Infrastructure as Code & Reliability Engineering"
+    },
+    {
+        "career_role_title": "AI Engineer",
+        "title": "Autonomous Multi-Agent Workflow Engine with Hybrid Vector Retrieval",
+        "objective": "Build an enterprise LLM agent orchestrator featuring tool execution, persistent conversational memory, and hybrid dense/sparse vector retrieval.",
+        "difficulty": "Advanced",
+        "required_skills": ["Deep Learning & Transformers", "Vector Database Architecture", "Python Programming"],
+        "tools": ["Python 3.11", "LangChain / LangGraph", "Qdrant", "FastAPI", "OpenAI / Gemini"],
+        "steps": [
+            "Implement an iterative ReAct reasoning loop with dynamic tool dispatching and guardrails.",
+            "Build a hybrid RAG pipeline combining BM25 keyword search with dense vector similarity and cross-encoder reranking.",
+            "Implement persistent session state caching using Redis and asynchronous streaming tokens over Server-Sent Events.",
+            "Evaluate agent precision and hallucination rates using automated synthetic benchmark suites."
+        ],
+        "expected_outcome": "An intelligent multi-agent platform capable of decomposing complex academic and industry goals with sub-second token latency.",
+        "competency_focus": "Agentic AI Architectures, Neural Retrieval & LLM Systems"
     }
 ]
 
@@ -1474,5 +1538,19 @@ CAREER_PATHWAYS = [
         "transition_difficulty": "Challenging",
         "bridge_skills": ["Machine Learning & Predictive Modeling", "Deep Learning & Transformers", "Vector Database Architecture"],
         "guidance": "Complement your microservice and scalability skills with PyTorch, model quantization, vector retrieval, and production MLOps."
+    },
+    {
+        "from_role": "Backend Developer",
+        "to_role": "Cloud Solutions Architect",
+        "transition_difficulty": "Smooth",
+        "bridge_skills": ["Cloud Architecture & DevOps", "Network Protocol Analysis"],
+        "guidance": "Leverage your server-side foundation to master Kubernetes cluster orchestration, Terraform infrastructure-as-code, and multi-region cloud security."
+    },
+    {
+        "from_role": "Machine Learning Engineer",
+        "to_role": "AI Engineer",
+        "transition_difficulty": "Smooth",
+        "bridge_skills": ["Vector Database Architecture", "Cloud Architecture & DevOps"],
+        "guidance": "Transition from training custom models to building end-to-end agentic workflows, low-latency hybrid RAG pipelines, and production LLM orchestration."
     }
 ]

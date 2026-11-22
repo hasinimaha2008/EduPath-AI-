@@ -48,6 +48,19 @@ async def get_career_recommendations(
     us_res = await session.execute(us_stmt)
     user_skill_map = {us.skill_id: (us, s.name) for us, s in us_res.all()}
 
+    # Fetch practical projects grouped by role
+    proj_stmt = select(CareerProject)
+    proj_res = await session.execute(proj_stmt)
+    all_projects = proj_res.scalars().all()
+    projects_by_role: Dict[str, list] = {}
+    for p in all_projects:
+        projects_by_role.setdefault(p.career_role_id, []).append({
+            "title": p.title,
+            "objective": p.objective,
+            "difficulty": p.difficulty,
+            "tools": p.tools
+        })
+
     output = []
     for rec, role in records:
         req_stmt = select(CareerSkillRequirement, Skill).join(
@@ -58,25 +71,47 @@ async def get_career_recommendations(
 
         matching = []
         missing = []
+        tot_w = 0.0
+        dem_w = 0.0
+        sr_w = 0.0
+
         for req, sk in reqs:
+            mult = 1.5 if req.importance_level == "Core" else 1.0
+            tot_w += 100.0 * mult
+
             if req.skill_id in user_skill_map:
                 u_sk, _ = user_skill_map[req.skill_id]
-                if u_sk.proficiency_level >= req.min_proficiency:
-                    matching.append(sk.name)
+                prof = min(u_sk.proficiency_level, 100.0)
+                if u_sk.source == "demonstrated":
+                    dem_w += prof * mult
                 else:
-                    missing.append(f"{sk.name} (Proficiency: {u_sk.proficiency_level}%)")
+                    sr_w += prof * mult
+
+                if prof >= req.min_proficiency:
+                    tag = " (Verified)" if u_sk.source == "demonstrated" else " (Self-Reported)"
+                    matching.append(f"{sk.name}{tag}")
+                else:
+                    missing.append(f"{sk.name} ({round(prof, 1)}% / {round(req.min_proficiency, 1)}%)")
             else:
                 missing.append(sk.name)
+
+        demonstrated_score = round((dem_w / tot_w) * 100.0, 1) if tot_w > 0 else 0.0
+        self_reported_score = round(((dem_w + sr_w) / tot_w) * 100.0, 1) if tot_w > 0 else 0.0
+        domain = intelligence_engine.ROLE_DOMAINS.get(role.title, "Technology")
 
         output.append(
             CareerRecommendationResponse(
                 id=rec.id,
                 career_role=CareerRoleResponse.model_validate(role),
+                domain=domain,
                 match_score=rec.match_score,
+                demonstrated_match_score=demonstrated_score,
+                self_reported_match_score=self_reported_score,
                 rationale=rec.rationale,
                 missing_skills_count=len(missing),
                 matching_skills=matching,
                 missing_skills=missing,
+                recommended_projects=projects_by_role.get(role.id, [])[:3],
                 recommended_at=rec.recommended_at
             )
         )

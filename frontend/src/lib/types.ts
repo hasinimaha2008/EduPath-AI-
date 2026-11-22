@@ -371,9 +371,14 @@ export interface StudyTask {
   description?: string;
   scheduled_date: string;
   duration_minutes: number;
-  priority: "High" | "Medium" | "Low";
+  priority: "High" | "Medium" | "Low" | string;
+  task_type?: "study" | "revision" | "quiz" | "career_project" | "exam_prep" | string;
+  difficulty_level?: "easy" | "medium" | "hard" | string;
+  action_url?: string;
+  notes?: string;
   is_completed: boolean;
   completed_at?: string;
+  is_overdue?: boolean;
 }
 
 export interface StudyPlan {
@@ -383,8 +388,86 @@ export interface StudyPlan {
   end_date?: string;
   daily_hours_target: number;
   status: string;
+  exam_date?: string;
+  learning_priority?: string;
+  total_tasks?: number;
+  completed_tasks?: number;
+  overdue_tasks?: number;
+  adherence_rate?: number;
   tasks: StudyTask[];
   created_at: string;
+}
+
+export interface StudyPlanGenerateOptions {
+  title?: string;
+  daily_hours_target?: number;
+  days_duration?: number;
+  focus_weak_topics?: boolean;
+  subject_ids?: string[];
+  topic_ids?: string[];
+  exam_date?: string;
+  learning_priority?: "weak_topics_first" | "exam_prep" | "career_skills" | "balanced" | string;
+  include_revision?: boolean;
+  include_quizzes?: boolean;
+}
+
+export interface StudyTaskCreateInput {
+  study_plan_id?: string;
+  topic_id?: string;
+  title: string;
+  description?: string;
+  scheduled_date: string;
+  duration_minutes?: number;
+  priority?: "High" | "Medium" | "Low" | string;
+  task_type?: "study" | "revision" | "quiz" | "career_project" | "exam_prep" | string;
+  difficulty_level?: "easy" | "medium" | "hard" | string;
+  notes?: string;
+}
+
+export interface StudyTaskUpdateInput {
+  title?: string;
+  description?: string;
+  scheduled_date?: string;
+  duration_minutes?: number;
+  priority?: "High" | "Medium" | "Low" | string;
+  task_type?: string;
+  difficulty_level?: string;
+  notes?: string;
+}
+
+export interface AdaptiveRecommendationItem {
+  id: string;
+  recommendation_type: string;
+  topic_id?: string;
+  topic_name?: string;
+  reason: string;
+  suggested_action: string;
+  estimated_duration_minutes: number;
+  priority: string;
+}
+
+export interface PlannerProgress {
+  today_date: string;
+  today_total_tasks: number;
+  today_completed_tasks: number;
+  today_minutes_scheduled: number;
+  today_minutes_completed: number;
+  week_adherence_percentage: number;
+  overdue_tasks_count: number;
+  exam_countdown_days?: number | null;
+  learning_streak_days: number;
+  weak_topics_covered_count: number;
+}
+
+export interface RescheduleMissedResponse {
+  rescheduled_count: number;
+  message: string;
+  rescheduled_tasks?: Array<{
+    task_id: string;
+    title: string;
+    previous_date: string;
+    new_date: string;
+  }>;
 }
 
 // --- Conversational AI Voice Agent Interfaces ---

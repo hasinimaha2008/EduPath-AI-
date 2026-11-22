@@ -1,4 +1,4 @@
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from datetime import datetime
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
 
@@ -435,7 +435,7 @@ class RoadmapGenerateRequest(BaseModel):
     career_role_id: str
     target_timeline_months: int = 6
 
-# --- Study Planner Schemas ---
+# --- Study Planner Schemas (Phase 7: Intelligent Adaptive Planner) ---
 class StudyTaskResponse(BaseModel):
     id: str
     study_plan_id: str
@@ -446,8 +446,13 @@ class StudyTaskResponse(BaseModel):
     scheduled_date: str
     duration_minutes: int
     priority: str
+    task_type: str = "study"  # study, revision, quiz, career_project, exam_prep
+    difficulty_level: str = "medium"  # easy, medium, hard
+    action_url: Optional[str] = None
+    notes: Optional[str] = None
     is_completed: bool
     completed_at: Optional[datetime] = None
+    is_overdue: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -458,6 +463,12 @@ class StudyPlanResponse(BaseModel):
     end_date: Optional[datetime] = None
     daily_hours_target: float
     status: str
+    exam_date: Optional[str] = None
+    learning_priority: str = "balanced"
+    total_tasks: int = 0
+    completed_tasks: int = 0
+    overdue_tasks: int = 0
+    adherence_rate: float = 0.0
     tasks: List[StudyTaskResponse] = []
     created_at: datetime
 
@@ -468,3 +479,58 @@ class StudyPlanGenerateRequest(BaseModel):
     daily_hours_target: float = 2.0
     days_duration: int = 14
     focus_weak_topics: bool = True
+    subject_ids: Optional[List[str]] = None
+    topic_ids: Optional[List[str]] = None
+    exam_date: Optional[str] = None  # YYYY-MM-DD
+    learning_priority: Optional[str] = "balanced"  # weak_topics_first, exam_prep, career_skills, balanced
+    include_revision: bool = True
+    include_quizzes: bool = True
+
+class StudyTaskCreateRequest(BaseModel):
+    study_plan_id: Optional[str] = None
+    topic_id: Optional[str] = None
+    title: str
+    description: Optional[str] = None
+    scheduled_date: str  # YYYY-MM-DD
+    duration_minutes: int = 45
+    priority: str = "Medium"  # High, Medium, Low
+    task_type: str = "study"  # study, revision, quiz, career_project, exam_prep
+    difficulty_level: str = "medium"
+    notes: Optional[str] = None
+
+class StudyTaskUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    scheduled_date: Optional[str] = None
+    duration_minutes: Optional[int] = None
+    priority: Optional[str] = None
+    task_type: Optional[str] = None
+    difficulty_level: Optional[str] = None
+    notes: Optional[str] = None
+
+class RescheduleMissedRequest(BaseModel):
+    study_plan_id: Optional[str] = None
+    start_from_date: Optional[str] = None  # YYYY-MM-DD, defaults to today
+
+class AdaptiveRecommendationItem(BaseModel):
+    id: str
+    recommendation_type: str  # weak_topic_revision, quiz_retake, missed_tasks_rebalance, exam_pacing
+    topic_id: Optional[str] = None
+    topic_name: Optional[str] = None
+    reason: str
+    suggested_action: str
+    estimated_duration_minutes: int
+    priority: str = "High"
+
+class PlannerProgressResponse(BaseModel):
+    today_date: str
+    today_total_tasks: int
+    today_completed_tasks: int
+    today_minutes_scheduled: int
+    today_minutes_completed: int
+    week_adherence_percentage: float
+    overdue_tasks_count: int
+    exam_countdown_days: Optional[int] = None
+    learning_streak_days: int
+    weak_topics_covered_count: int
+

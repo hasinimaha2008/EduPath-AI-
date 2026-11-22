@@ -7,7 +7,9 @@ import {
   LanguageInfo, LearningProfile, MistakeInsights, NotificationListResponse,
   TopicWorkspaceData, ExplanationModeResponse, CareerComparisonResponse,
   CareerProjectItem, CareerPathwayItem,
-  StudentCareerProfile, StudentProfileUpdateRequest
+  StudentCareerProfile, StudentProfileUpdateRequest,
+  StudyTask, StudyPlanGenerateOptions, StudyTaskCreateInput, StudyTaskUpdateInput,
+  AdaptiveRecommendationItem, PlannerProgress, RescheduleMissedResponse
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
@@ -471,19 +473,19 @@ class ApiClient {
     });
   }
 
-  // Study Planner
+  // Study Planner (Phase 7: Intelligent Adaptive Planner)
   async getActiveStudyPlan(): Promise<StudyPlan> {
     return this.request<StudyPlan>("/api/study-planner/active");
   }
 
-  async generateStudyPlan(data: { title?: string; daily_hours_target?: number; days_duration?: number }): Promise<StudyPlan> {
+  async generateStudyPlan(data: StudyPlanGenerateOptions): Promise<StudyPlan> {
     return this.request<StudyPlan>("/api/study-planner/generate", {
       method: "POST",
       body: JSON.stringify(data),
     });
   }
 
-  async toggleTask(taskId: string): Promise<{ task_id: string; is_completed: boolean }> {
+  async toggleTask(taskId: string): Promise<{ task_id: string; is_completed: boolean; completed_at?: string }> {
     return this.request(`/api/study-planner/tasks/${taskId}/toggle`, {
       method: "POST",
     });
@@ -493,6 +495,41 @@ class ApiClient {
     return this.request(`/api/study-planner/tasks/${taskId}/reschedule?new_date=${encodeURIComponent(newDate)}`, {
       method: "POST",
     });
+  }
+
+  async updateTask(taskId: string, data: StudyTaskUpdateInput): Promise<StudyTask> {
+    return this.request<StudyTask>(`/api/study-planner/tasks/${taskId}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async createCustomTask(data: StudyTaskCreateInput): Promise<StudyTask> {
+    return this.request<StudyTask>("/api/study-planner/tasks", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteTask(taskId: string): Promise<{ message: string; task_id: string }> {
+    return this.request<{ message: string; task_id: string }>(`/api/study-planner/tasks/${taskId}`, {
+      method: "DELETE",
+    });
+  }
+
+  async rescheduleMissedTasks(planId?: string, startFromDate?: string): Promise<RescheduleMissedResponse> {
+    return this.request<RescheduleMissedResponse>("/api/study-planner/reschedule-missed", {
+      method: "POST",
+      body: JSON.stringify({ study_plan_id: planId, start_from_date: startFromDate }),
+    });
+  }
+
+  async getPlannerAdaptiveRecommendations(): Promise<AdaptiveRecommendationItem[]> {
+    return this.request<AdaptiveRecommendationItem[]>("/api/study-planner/adaptive-recommendations");
+  }
+
+  async getPlannerProgress(): Promise<PlannerProgress> {
+    return this.request<PlannerProgress>("/api/study-planner/progress");
   }
 
   // Chat History

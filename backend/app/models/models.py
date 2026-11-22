@@ -425,6 +425,9 @@ class StudyPlan(Base):
     end_date = Column(DateTime(timezone=True), nullable=True)
     daily_hours_target = Column(Float, default=2.0)
     status = Column(String(30), default="active")  # active, completed, archived
+    exam_date = Column(String(30), nullable=True)  # YYYY-MM-DD
+    learning_priority = Column(String(50), default="balanced")  # weak_topics_first, exam_prep, career_skills, balanced
+    metadata_json = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=get_utc_now)
 
     user = relationship("User", back_populates="study_plans")
@@ -442,6 +445,10 @@ class StudyTask(Base):
     scheduled_date = Column(String(30), nullable=False)  # YYYY-MM-DD
     duration_minutes = Column(Integer, default=45)
     priority = Column(String(20), default="Medium")  # High, Medium, Low
+    task_type = Column(String(50), default="study")  # study, revision, quiz, career_project, exam_prep
+    difficulty_level = Column(String(30), default="medium")  # easy, medium, hard
+    action_url = Column(String(255), nullable=True)
+    notes = Column(Text, nullable=True)
     is_completed = Column(Boolean, default=False)
     completed_at = Column(DateTime(timezone=True), nullable=True)
 

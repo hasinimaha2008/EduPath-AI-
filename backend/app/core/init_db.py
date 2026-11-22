@@ -28,13 +28,31 @@ async def init_database():
     """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        # Safe migration: ensure note_id exists on quizzes table
+        # Safe migration: ensure note_id exists on quizzes table, and study planner columns
         def _check_and_add_columns(connection):
             from sqlalchemy import inspect, text
             insp = inspect(connection)
             quiz_cols = [c["name"] for c in insp.get_columns("quizzes")]
             if "note_id" not in quiz_cols:
                 connection.execute(text("ALTER TABLE quizzes ADD COLUMN note_id VARCHAR(36) REFERENCES notes(id)"))
+
+            task_cols = [c["name"] for c in insp.get_columns("study_tasks")]
+            if "task_type" not in task_cols:
+                connection.execute(text("ALTER TABLE study_tasks ADD COLUMN task_type VARCHAR(50) DEFAULT 'study'"))
+            if "difficulty_level" not in task_cols:
+                connection.execute(text("ALTER TABLE study_tasks ADD COLUMN difficulty_level VARCHAR(30) DEFAULT 'medium'"))
+            if "action_url" not in task_cols:
+                connection.execute(text("ALTER TABLE study_tasks ADD COLUMN action_url VARCHAR(255)"))
+            if "notes" not in task_cols:
+                connection.execute(text("ALTER TABLE study_tasks ADD COLUMN notes TEXT"))
+
+            plan_cols = [c["name"] for c in insp.get_columns("study_plans")]
+            if "exam_date" not in plan_cols:
+                connection.execute(text("ALTER TABLE study_plans ADD COLUMN exam_date VARCHAR(30)"))
+            if "learning_priority" not in plan_cols:
+                connection.execute(text("ALTER TABLE study_plans ADD COLUMN learning_priority VARCHAR(50) DEFAULT 'balanced'"))
+            if "metadata_json" not in plan_cols:
+                connection.execute(text("ALTER TABLE study_plans ADD COLUMN metadata_json TEXT"))
         await conn.run_sync(_check_and_add_columns)
     
     async with AsyncSessionLocal() as session:

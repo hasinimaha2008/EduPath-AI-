@@ -12,6 +12,7 @@ Interconnects:
 import json
 import logging
 import re
+from urllib.parse import quote
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1220,75 +1221,540 @@ class EduPathIntelligenceEngine:
         user_id: str,
         title: str = "Personalized Adaptive Study Plan",
         daily_hours: float = 2.0,
-        days_duration: int = 14
+        days_duration: int = 14,
+        focus_weak_topics: bool = True,
+        subject_ids: Optional[List[str]] = None,
+        topic_ids: Optional[List[str]] = None,
+        exam_date: Optional[str] = None,
+        learning_priority: str = "balanced",
+        include_revision: bool = True,
+        include_quizzes: bool = True
     ) -> StudyPlan:
         """
-        Creates a realistic, non-overlapping daily and weekly study plan
-        prioritizing verified weak topics and missing career skills.
+        Phase 7: Generates a realistic, highly adaptive daily and weekly study plan.
+        Intelligently allocates time based on topic difficulty, prioritizes verified weak topics,
+        embeds spaced revision and practice quizzes, connects directly to Smart Notes and Quiz generator,
+        and avoids creating unrealistic or overloading timetables.
         """
-        weak_stmt = select(TopicPerformance, Topic).join(
-            Topic, TopicPerformance.topic_id == Topic.id
-        ).where(
-            TopicPerformance.user_id == user_id,
-            TopicPerformance.mastery_status.in_(["needs_practice", "developing"])
+        # Archive previous active plans for this student
+        prev_plans_stmt = select(StudyPlan).where(
+            StudyPlan.user_id == user_id,
+            StudyPlan.status == "active"
         )
-        weak_res = await session.execute(weak_stmt)
-        weak_pairs = weak_res.all()
+        prev_plans_res = await session.execute(prev_plans_stmt)
+        for prev in prev_plans_res.scalars().all():
+            prev.status = "archived"
 
-        candidate_topics = []
-        if weak_pairs:
-            candidate_topics = [(tp.topic_id, t.name, "High") for tp, t in weak_pairs]
-        else:
-            top_stmt = select(Topic).limit(6)
+        # Calculate duration based on exam date if provided
+        target_exam_date = None
+        if exam_date:
+            try:
+                ed_dt = datetime.strptime(exam_date.strip(), "%Y-%m-%d").date()
+                today_dt = datetime.now(timezone.utc).date()
+                diff_days = (ed_dt - today_dt).days
+                if diff_days > 0:
+                    days_duration = min(max(diff_days, 3), 60)
+                    target_exam_date = exam_date.strip()
+            except Exception:
+                pass
+
+        # Fetch student's real topic performance (zero fabrication)
+        tp_stmt = select(TopicPerformance, Topic).join(
+            Topic, TopicPerformance.topic_id == Topic.id
+        ).where(TopicPerformance.user_id == user_id)
+        tp_res = await session.execute(tp_stmt)
+        tp_records = tp_res.all()
+
+        weak_topic_dict = {}
+        proficient_topic_dict = {}
+        for tp, t in tp_records:
+            if tp.accuracy_percentage < 70.0 or tp.mastery_status in ["needs_practice", "developing"]:
+                weak_topic_dict[t.id] = (tp, t)
+            else:
+                proficient_topic_dict[t.id] = (tp, t)
+
+        # Determine target career role if any (Roadmap integration)
+        prof_stmt = select(LearningProfile).where(LearningProfile.user_id == user_id).limit(1)
+        prof_res = await session.execute(prof_stmt)
+        user_profile = prof_res.scalars().first()
+        target_career_id = user_profile.target_career_id if user_profile else None
+
+        # Build candidate topics
+        candidate_topic_objs: List[Topic] = []
+
+        if topic_ids and len(topic_ids) > 0:
+            top_stmt = select(Topic).where(Topic.id.in_(topic_ids))
             top_res = await session.execute(top_stmt)
-            candidate_topics = [(t.id, t.name, "Medium") for t in top_res.scalars().all()]
+            candidate_topic_objs = list(top_res.scalars().all())
+        elif subject_ids and len(subject_ids) > 0:
+            top_stmt = select(Topic).where(Topic.subject_id.in_(subject_ids))
+            top_res = await session.execute(top_stmt)
+            candidate_topic_objs = list(top_res.scalars().all())
+        else:
+            # Automatic intelligent candidate selection:
+            # 1. Add verified weak topics first
+            if focus_weak_topics or learning_priority in ["weak_topics_first", "balanced", "exam_prep"]:
+                candidate_topic_objs.extend([t for _, t in weak_topic_dict.values()])
 
+            # 2. Add career roadmap topics if user has a target career
+            if target_career_id and learning_priority in ["career_skills", "balanced"]:
+                roadmap_topics_stmt = select(Topic).join(
+                    SubjectSkillMapping, SubjectSkillMapping.topic_id == Topic.id
+                ).where(SubjectSkillMapping.career_role_id == target_career_id).limit(4)
+                roadmap_topics_res = await session.execute(roadmap_topics_stmt)
+                for t in roadmap_topics_res.scalars().all():
+                    if t.id not in [ct.id for ct in candidate_topic_objs]:
+                        candidate_topic_objs.append(t)
+
+            # 3. Supplement with general core topics if needed
+            if len(candidate_topic_objs) < 6:
+                needed = 8 - len(candidate_topic_objs)
+                supp_stmt = select(Topic).limit(needed)
+                supp_res = await session.execute(supp_stmt)
+                for t in supp_res.scalars().all():
+                    if t.id not in [ct.id for ct in candidate_topic_objs]:
+                        candidate_topic_objs.append(t)
+
+        if not candidate_topic_objs:
+            fallback_stmt = select(Topic).limit(8)
+            fallback_res = await session.execute(fallback_stmt)
+            candidate_topic_objs = list(fallback_res.scalars().all())
+
+        # Create new active study plan
         plan = StudyPlan(
             user_id=user_id,
             title=title,
             start_date=datetime.now(timezone.utc),
             end_date=datetime.now(timezone.utc) + timedelta(days=days_duration),
             daily_hours_target=daily_hours,
-            status="active"
+            status="active",
+            exam_date=target_exam_date,
+            learning_priority=learning_priority,
+            metadata_json=json.dumps({
+                "focus_weak_topics": focus_weak_topics,
+                "included_revision": include_revision,
+                "included_quizzes": include_quizzes,
+                "total_candidate_topics": len(candidate_topic_objs)
+            })
         )
         session.add(plan)
         await session.flush()
 
+        # Generate structured task items per topic with difficulty-based duration
+        generated_tasks_pool = []
+        for topic in candidate_topic_objs:
+            is_weak = topic.id in weak_topic_dict
+            is_proficient = topic.id in proficient_topic_dict
+
+            # Difficulty-based duration & priority allocation
+            if is_weak:
+                difficulty = "hard"
+                study_duration = 55
+                revision_duration = 40
+                quiz_duration = 35
+                priority = "High"
+            elif is_proficient:
+                difficulty = "medium"
+                study_duration = 45
+                revision_duration = 30
+                quiz_duration = 30
+                priority = "Medium"
+            else:
+                difficulty = "medium"
+                study_duration = 40
+                revision_duration = 30
+                quiz_duration = 25
+                priority = "Medium"
+
+            # 1. Conceptual Study Task (Smart Notes Integration)
+            study_task = {
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "title": f"Conceptual Study & Note Review: {topic.name}",
+                "description": f"Study textbook theory and review structured smart notes covering foundational principles of {topic.name}.",
+                "duration_minutes": study_duration,
+                "priority": priority,
+                "task_type": "study",
+                "difficulty_level": difficulty,
+                "action_url": f"/dashboard/notes?topic={quote(topic.name)}"
+            }
+            generated_tasks_pool.append(study_task)
+
+            # 2. Practice Quiz Task (AI Quiz Generator Integration)
+            if include_quizzes:
+                quiz_task = {
+                    "topic_id": topic.id,
+                    "topic_name": topic.name,
+                    "title": f"Practice Quiz Assessment: {topic.name}",
+                    "description": f"Attempt an interactive assessment on {topic.name} to verify retention and enhance topic mastery status.",
+                    "duration_minutes": quiz_duration,
+                    "priority": priority,
+                    "task_type": "quiz",
+                    "difficulty_level": difficulty,
+                    "action_url": f"/dashboard/quiz?topic_id={topic.id}"
+                }
+                generated_tasks_pool.append(quiz_task)
+
+            # 3. Spaced Revision Session (Spaced repetition)
+            if include_revision:
+                revision_task = {
+                    "topic_id": topic.id,
+                    "topic_name": topic.name,
+                    "title": f"Targeted Spaced Revision: {topic.name}",
+                    "description": f"Re-read key formulas, edge cases, and high-yield flash summaries for {topic.name} to prevent knowledge decay.",
+                    "duration_minutes": revision_duration,
+                    "priority": "High" if is_weak else "Medium",
+                    "task_type": "revision",
+                    "difficulty_level": difficulty,
+                    "action_url": f"/dashboard/notes?topic={quote(topic.name)}&mode=revision"
+                }
+                generated_tasks_pool.append(revision_task)
+
+        # Distribute tasks realistically across schedule days
+        # Daily limit: max 2 to 3 tasks per day to prevent student burnout (realistic timetable)
+        daily_max_tasks = 2 if daily_hours <= 2.0 else 3
         start_date = datetime.now(timezone.utc).date()
-        topic_idx = 0
+        pool_idx = 0
 
-        for day in range(min(days_duration, 14)):
-            current_date = (start_date + timedelta(days=day)).strftime("%Y-%m-%d")
-            
-            for task_slot in range(2):
-                if candidate_topics:
-                    topic_id, topic_name, priority = candidate_topics[topic_idx % len(candidate_topics)]
-                    topic_idx += 1
-                else:
-                    topic_id, topic_name, priority = None, "Curriculum Review", "Medium"
+        for day in range(days_duration):
+            current_date_str = (start_date + timedelta(days=day)).strftime("%Y-%m-%d")
+            day_minutes_accumulated = 0
 
-                if task_slot == 0:
-                    task_title = f"Conceptual Study & Note Generation: {topic_name}"
-                    task_desc = f"Review textbook/uploaded notes and generate structured revision notes for {topic_name}."
-                    duration = 50
-                else:
-                    task_title = f"Knowledge Evaluation & Quiz Practice: {topic_name}"
-                    task_desc = f"Attempt medium/hard quiz on {topic_name} to strengthen mastery status and verify retention."
-                    duration = 40
-
-                task = StudyTask(
+            # Special case for final 1-2 days before target exam: Exam Simulation
+            if target_exam_date and (days_duration - day) <= 2:
+                exam_sim_task = StudyTask(
                     study_plan_id=plan.id,
-                    topic_id=topic_id,
-                    title=task_title,
-                    description=task_desc,
-                    scheduled_date=current_date,
-                    duration_minutes=duration,
-                    priority=priority,
+                    topic_id=candidate_topic_objs[0].id if candidate_topic_objs else None,
+                    title="High-Yield Exam Simulation & Diagnostic Speed Test",
+                    description="Comprehensive timed examination sprint covering all priority concepts and mistake diagnostics.",
+                    scheduled_date=current_date_str,
+                    duration_minutes=min(int(daily_hours * 60), 90),
+                    priority="High",
+                    task_type="exam_prep",
+                    difficulty_level="hard",
+                    action_url="/dashboard/quiz",
                     is_completed=False
                 )
-                session.add(task)
+                session.add(exam_sim_task)
+                continue
+
+            for _ in range(daily_max_tasks):
+                if pool_idx >= len(generated_tasks_pool):
+                    break
+
+                task_data = generated_tasks_pool[pool_idx]
+                pool_idx += 1
+
+                task_record = StudyTask(
+                    study_plan_id=plan.id,
+                    topic_id=task_data["topic_id"],
+                    title=task_data["title"],
+                    description=task_data["description"],
+                    scheduled_date=current_date_str,
+                    duration_minutes=task_data["duration_minutes"],
+                    priority=task_data["priority"],
+                    task_type=task_data["task_type"],
+                    difficulty_level=task_data["difficulty_level"],
+                    action_url=task_data["action_url"],
+                    is_completed=False
+                )
+                session.add(task_record)
+                day_minutes_accumulated += task_data["duration_minutes"]
+
+                if day_minutes_accumulated >= (daily_hours * 60):
+                    break
 
         await session.commit()
         return plan
 
+    @staticmethod
+    async def reschedule_missed_tasks(
+        session: AsyncSession,
+        user_id: str,
+        plan_id: Optional[str] = None,
+        start_from_date: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Intelligently identifies missed/overdue tasks and redistributes them across
+        upcoming available schedule days without overloading any single day.
+        """
+        today_date = datetime.now(timezone.utc).date()
+        today_str = today_date.strftime("%Y-%m-%d")
+
+        # Find target study plan
+        if plan_id:
+            plan_stmt = select(StudyPlan).where(StudyPlan.id == plan_id, StudyPlan.user_id == user_id)
+        else:
+            plan_stmt = select(StudyPlan).where(
+                StudyPlan.user_id == user_id,
+                StudyPlan.status == "active"
+            ).order_by(StudyPlan.created_at.desc()).limit(1)
+
+        plan_res = await session.execute(plan_stmt)
+        plan = plan_res.scalar_one_or_none()
+        if not plan:
+            return {"rescheduled_count": 0, "message": "No active study plan found."}
+
+        # Query all incomplete tasks with scheduled_date < today_str
+        missed_stmt = select(StudyTask).where(
+            StudyTask.study_plan_id == plan.id,
+            StudyTask.is_completed == False,
+            StudyTask.scheduled_date < today_str
+        ).order_by(StudyTask.scheduled_date.asc())
+        missed_res = await session.execute(missed_stmt)
+        missed_tasks = missed_res.scalars().all()
+
+        if not missed_tasks:
+            return {
+                "rescheduled_count": 0,
+                "message": "All past scheduled tasks are completed. No overdue tasks to reschedule."
+            }
+
+        # Query future tasks to avoid overloading days
+        future_stmt = select(StudyTask).where(
+            StudyTask.study_plan_id == plan.id,
+            StudyTask.scheduled_date >= today_str
+        )
+        future_res = await session.execute(future_stmt)
+        future_tasks = future_res.scalars().all()
+
+        tasks_per_day: Dict[str, int] = {}
+        for ft in future_tasks:
+            tasks_per_day[ft.scheduled_date] = tasks_per_day.get(ft.scheduled_date, 0) + 1
+
+        # Redistribution algorithm: allocate max 2 tasks per day
+        target_start = datetime.strptime(start_from_date, "%Y-%m-%d").date() if start_from_date else today_date
+        current_check_date = target_start
+        rescheduled_items = []
+
+        for task in missed_tasks:
+            # Find next date with capacity (< 2 tasks)
+            while tasks_per_day.get(current_check_date.strftime("%Y-%m-%d"), 0) >= 2:
+                current_check_date += timedelta(days=1)
+
+            dest_date_str = current_check_date.strftime("%Y-%m-%d")
+            old_date = task.scheduled_date
+            task.scheduled_date = dest_date_str
+            task.priority = "High"  # Missed tasks are automatically elevated
+            task.notes = f"Automatically rebalanced from {old_date} by Adaptive Planner."
+            tasks_per_day[dest_date_str] = tasks_per_day.get(dest_date_str, 0) + 1
+
+            rescheduled_items.append({
+                "task_id": task.id,
+                "title": task.title,
+                "previous_date": old_date,
+                "new_date": dest_date_str
+            })
+
+        await session.commit()
+        return {
+            "rescheduled_count": len(rescheduled_items),
+            "message": f"Successfully rebalanced {len(rescheduled_items)} missed tasks into a realistic, non-overloading schedule.",
+            "rescheduled_tasks": rescheduled_items
+        }
+
+    @staticmethod
+    async def get_adaptive_planner_recommendations(
+        session: AsyncSession,
+        user_id: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Analyzes real student performance data to generate proactive, practical recommendations
+        for the study planner (weak topic revisions, quiz retakes, exam pacing).
+        """
+        recommendations = []
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        # 1. Check recent quiz scores (< 70% accuracy)
+        recent_attempts_stmt = select(QuizAttempt, Quiz).join(
+            Quiz, QuizAttempt.quiz_id == Quiz.id
+        ).where(QuizAttempt.user_id == user_id).order_by(QuizAttempt.completed_at.desc()).limit(5)
+        recent_res = await session.execute(recent_attempts_stmt)
+
+        for attempt, quiz in recent_res.all():
+            if attempt.percentage < 70.0 and quiz.topic_id:
+                topic_stmt = select(Topic).where(Topic.id == quiz.topic_id)
+                top_res = await session.execute(topic_stmt)
+                topic = top_res.scalar_one_or_none()
+                top_name = topic.name if topic else "Curriculum Topic"
+
+                recommendations.append({
+                    "id": f"rec-rev-{attempt.id[:8]}",
+                    "recommendation_type": "weak_topic_revision",
+                    "topic_id": quiz.topic_id,
+                    "topic_name": top_name,
+                    "reason": f"You scored {attempt.percentage:.1f}% on a recent {top_name} assessment.",
+                    "suggested_action": f"Schedule a 45-minute Smart Notes deep-dive and spaced revision session for {top_name}.",
+                    "estimated_duration_minutes": 45,
+                    "priority": "High"
+                })
+                break  # one targeted quiz recommendation is enough
+
+        # 2. Check overdue tasks in active plan
+        active_plan_stmt = select(StudyPlan).where(
+            StudyPlan.user_id == user_id,
+            StudyPlan.status == "active"
+        ).order_by(StudyPlan.created_at.desc()).limit(1)
+        active_res = await session.execute(active_plan_stmt)
+        active_plan = active_res.scalar_one_or_none()
+
+        if active_plan:
+            overdue_stmt = select(func.count(StudyTask.id)).where(
+                StudyTask.study_plan_id == active_plan.id,
+                StudyTask.is_completed == False,
+                StudyTask.scheduled_date < today_str
+            )
+            overdue_count = (await session.execute(overdue_stmt)).scalar() or 0
+
+            if overdue_count > 0:
+                recommendations.append({
+                    "id": "rec-rebalance-missed",
+                    "recommendation_type": "missed_tasks_rebalance",
+                    "topic_id": None,
+                    "topic_name": None,
+                    "reason": f"You have {overdue_count} overdue task(s) from past dates.",
+                    "suggested_action": "Use the one-click Adaptive Rebalance to redistribute missed tasks without exceeding daily study targets.",
+                    "estimated_duration_minutes": 0,
+                    "priority": "High"
+                })
+
+            # 3. Check exam countdown
+            if active_plan.exam_date:
+                try:
+                    ed_dt = datetime.strptime(active_plan.exam_date, "%Y-%m-%d").date()
+                    now_dt = datetime.now(timezone.utc).date()
+                    countdown = (ed_dt - now_dt).days
+                    if 0 < countdown <= 14:
+                        recommendations.append({
+                            "id": "rec-exam-pacing",
+                            "recommendation_type": "exam_pacing",
+                            "topic_id": None,
+                            "topic_name": None,
+                            "reason": f"Target examination date is in {countdown} day(s).",
+                            "suggested_action": "Prioritize high-yield mock quizzes and final formula review sessions.",
+                            "estimated_duration_minutes": 60,
+                            "priority": "High"
+                        })
+                except Exception:
+                    pass
+
+        return recommendations
+
+    @staticmethod
+    async def get_planner_progress(
+        session: AsyncSession,
+        user_id: str
+    ) -> Dict[str, Any]:
+        """
+        Calculates real-time daily and weekly progress, schedule adherence rate,
+        learning streak, and upcoming exam countdown.
+        """
+        today_date = datetime.now(timezone.utc).date()
+        today_str = today_date.strftime("%Y-%m-%d")
+        week_ago_str = (today_date - timedelta(days=7)).strftime("%Y-%m-%d")
+
+        active_plan_stmt = select(StudyPlan).where(
+            StudyPlan.user_id == user_id,
+            StudyPlan.status == "active"
+        ).order_by(StudyPlan.created_at.desc()).limit(1)
+        active_res = await session.execute(active_plan_stmt)
+        plan = active_res.scalar_one_or_none()
+
+        if not plan:
+            return {
+                "today_date": today_str,
+                "today_total_tasks": 0,
+                "today_completed_tasks": 0,
+                "today_minutes_scheduled": 0,
+                "today_minutes_completed": 0,
+                "week_adherence_percentage": 0.0,
+                "overdue_tasks_count": 0,
+                "exam_countdown_days": None,
+                "learning_streak_days": 0,
+                "weak_topics_covered_count": 0
+            }
+
+        # Today's tasks
+        today_tasks_stmt = select(StudyTask).where(
+            StudyTask.study_plan_id == plan.id,
+            StudyTask.scheduled_date == today_str
+        )
+        today_res = await session.execute(today_tasks_stmt)
+        today_tasks = today_res.scalars().all()
+
+        today_completed = sum(1 for t in today_tasks if t.is_completed)
+        today_scheduled_mins = sum(t.duration_minutes for t in today_tasks)
+        today_completed_mins = sum(t.duration_minutes for t in today_tasks if t.is_completed)
+
+        # Weekly adherence (tasks scheduled between week_ago_str and today_str)
+        week_tasks_stmt = select(StudyTask).where(
+            StudyTask.study_plan_id == plan.id,
+            StudyTask.scheduled_date >= week_ago_str,
+            StudyTask.scheduled_date <= today_str
+        )
+        week_res = await session.execute(week_tasks_stmt)
+        week_tasks = week_res.scalars().all()
+        week_completed = sum(1 for t in week_tasks if t.is_completed)
+        week_adherence = round((week_completed / len(week_tasks)) * 100.0, 1) if week_tasks else 100.0
+
+        # Overdue tasks
+        overdue_stmt = select(func.count(StudyTask.id)).where(
+            StudyTask.study_plan_id == plan.id,
+            StudyTask.is_completed == False,
+            StudyTask.scheduled_date < today_str
+        )
+        overdue_count = (await session.execute(overdue_stmt)).scalar() or 0
+
+        # Exam countdown
+        countdown = None
+        if plan.exam_date:
+            try:
+                ed_dt = datetime.strptime(plan.exam_date, "%Y-%m-%d").date()
+                countdown = max(0, (ed_dt - today_date).days)
+            except Exception:
+                pass
+
+        # Weak topics practiced in active plan
+        weak_covered_stmt = select(func.count(func.distinct(StudyTask.topic_id))).where(
+            StudyTask.study_plan_id == plan.id,
+            StudyTask.is_completed == True,
+            StudyTask.topic_id.isnot(None)
+        )
+        weak_covered = (await session.execute(weak_covered_stmt)).scalar() or 0
+
+        # Streak calculation from quiz attempts
+        attempts_stmt = select(QuizAttempt.completed_at).where(
+            QuizAttempt.user_id == user_id
+        ).order_by(QuizAttempt.completed_at.desc())
+        att_res = await session.execute(attempts_stmt)
+        attempt_dates = set()
+        for dt_val in att_res.scalars().all():
+            if dt_val:
+                attempt_dates.add(dt_val.date())
+
+        streak = 0
+        curr_check = today_date
+        while curr_check in attempt_dates:
+            streak += 1
+            curr_check -= timedelta(days=1)
+        if streak == 0 and (today_date - timedelta(days=1)) in attempt_dates:
+            curr_check = today_date - timedelta(days=1)
+            while curr_check in attempt_dates:
+                streak += 1
+                curr_check -= timedelta(days=1)
+
+        return {
+            "today_date": today_str,
+            "today_total_tasks": len(today_tasks),
+            "today_completed_tasks": today_completed,
+            "today_minutes_scheduled": today_scheduled_mins,
+            "today_minutes_completed": today_completed_mins,
+            "week_adherence_percentage": week_adherence,
+            "overdue_tasks_count": overdue_count,
+            "exam_countdown_days": countdown,
+            "learning_streak_days": streak,
+            "weak_topics_covered_count": weak_covered
+        }
+
 intelligence_engine = EduPathIntelligenceEngine()
+

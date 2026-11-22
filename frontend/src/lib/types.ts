@@ -661,3 +661,94 @@ export interface CareerComparisonResponse {
   comparison_count: number;
 }
 
+export interface EcosystemRecommendation {
+  source: string;
+  category: string;
+  title: string;
+  action_url: string;
+  action_label: string;
+  priority: string;
+}
+
+export interface EcosystemSummaryResponse {
+  user_id: string;
+  user_name: string;
+  target_career: {
+    id: string | null;
+    title: string;
+    readiness_score: number;
+    missing_skills: string[];
+  };
+  documents_summary: {
+    total_documents: number;
+    recent_documents: {
+      id: string;
+      title: string;
+      file_type: string;
+      status: string;
+      created_at: string;
+    }[];
+  };
+  notes_summary: {
+    total_notes: number;
+    recent_notes: {
+      id: string;
+      title: string;
+      format_type: string;
+      topic_name?: string;
+      created_at: string;
+    }[];
+  };
+  quizzes_summary: {
+    total_attempts: number;
+    average_score: number;
+    recent_quizzes: {
+      id: string;
+      quiz_id: string;
+      title: string;
+      score: number;
+      max_score: number;
+      percentage: number;
+      completed_at: string;
+    }[];
+  };
+  analytics_summary: {
+    topics_mastered_count: number;
+    topics_developing_count: number;
+    weak_topics_count: number;
+    weak_topics: {
+      topic_id: string;
+      name: string;
+      accuracy: number;
+      mastery: string;
+    }[];
+  };
+  study_plan: {
+    id: string;
+    title: string;
+    exam_date?: string;
+    total_tasks: number;
+    completed_tasks: number;
+    pending_tasks: number;
+    adherence_rate: number;
+  } | null;
+  today_tasks: {
+    id: string;
+    title: string;
+    task_type: string;
+    priority: string;
+    duration_minutes: number;
+    is_completed: boolean;
+    action_url?: string;
+  }[];
+  career_roadmap: {
+    id: string;
+    title: string;
+    progress_percentage: number;
+    completed_milestones: number;
+    total_milestones: number;
+    next_milestone?: string;
+  } | null;
+  recommendations: EcosystemRecommendation[];
+}
+

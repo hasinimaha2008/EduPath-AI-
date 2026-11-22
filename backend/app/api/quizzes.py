@@ -45,6 +45,20 @@ async def generate_quiz(
             source_text = "\n\n".join([c.content for c in chunks[:12]])
             if not req.title:
                 topic_title = doc.title
+            if doc.subject_id and not req.subject_id:
+                req.subject_id = doc.subject_id
+            if not req.topic_id and req.subject_id:
+                top_stmt = select(Topic).where(Topic.subject_id == req.subject_id).limit(1)
+                matched_top = (await session.execute(top_stmt)).scalars().first()
+                if matched_top:
+                    req.topic_id = matched_top.id
+            if not req.topic_id:
+                top_stmt = select(Topic).limit(1)
+                matched_top = (await session.execute(top_stmt)).scalars().first()
+                if matched_top:
+                    req.topic_id = matched_top.id
+                    if not req.subject_id:
+                        req.subject_id = matched_top.subject_id
 
     if req.note_id:
         note_stmt = select(Note).where(Note.id == req.note_id, Note.user_id == current_user.id)
@@ -56,6 +70,16 @@ async def generate_quiz(
                 topic_title = note.title
             if note.subject_id and not req.subject_id:
                 req.subject_id = note.subject_id
+            if not req.topic_id and note.topic_name:
+                top_stmt = select(Topic).where(Topic.name.ilike(f"%{note.topic_name}%")).limit(1)
+                matched_top = (await session.execute(top_stmt)).scalars().first()
+                if matched_top:
+                    req.topic_id = matched_top.id
+            if not req.topic_id and req.subject_id:
+                top_stmt = select(Topic).where(Topic.subject_id == req.subject_id).limit(1)
+                matched_top = (await session.execute(top_stmt)).scalars().first()
+                if matched_top:
+                    req.topic_id = matched_top.id
 
     if not source_text:
         source_text = f"Curriculum concepts, properties, algorithms, and applications of {topic_title}."

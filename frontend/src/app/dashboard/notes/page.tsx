@@ -88,6 +88,20 @@ export default function SmartNotesPage() {
   useEffect(() => {
     loadNotes();
     loadContextData();
+
+    // Cross-module ecosystem deep-linking: prefill topic, mode, document_id
+    if (typeof window !== "undefined") {
+      const urlParams = new URLSearchParams(window.location.search);
+      const topParam = urlParams.get("topic");
+      const docParam = urlParams.get("document_id");
+      const modeParam = urlParams.get("mode");
+      const subParam = urlParams.get("subject_id");
+
+      if (topParam) setTopicName(topParam);
+      if (docParam) setSelectedDocId(docParam);
+      if (modeParam) setSelectedNoteType(modeParam);
+      if (subParam) setSelectedSubjectId(subParam);
+    }
   }, []);
 
   async function loadNotes() {

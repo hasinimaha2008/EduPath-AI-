@@ -104,6 +104,15 @@ export default function StudyAssistantPage() {
         if (convs.length > 0) {
           loadConversation(convs[0].id);
         }
+
+        // Support cross-module deep link from documents/ecosystem
+        if (typeof window !== "undefined") {
+          const urlParams = new URLSearchParams(window.location.search);
+          const docParam = urlParams.get("document_id");
+          const subParam = urlParams.get("subject_id");
+          if (docParam) setSelectedDocId(docParam);
+          if (subParam) setSelectedSubjectId(subParam);
+        }
       } catch (e) {
         console.error("Failed to initialize General-Purpose AI Assistant:", e);
       }

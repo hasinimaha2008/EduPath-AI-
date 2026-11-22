@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import Link from "next/link";
 import {
   UploadCloud,
   FileText,
@@ -624,6 +625,33 @@ export default function DocumentManagementPage() {
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
+
+                {/* Cross-Module Ecosystem Deep Links */}
+                {doc.status === "ready" && (
+                  <div className="flex items-center gap-1.5 w-full mt-3 pt-2.5 border-t border-[#291A3E]/80">
+                    <Link
+                      href={`/dashboard/assistant?document_id=${doc.id}`}
+                      className="flex-1 py-1 px-2 rounded-lg bg-[#181026] hover:bg-[#25153D] text-[#C084FC] hover:text-white border border-[#352150] text-[10px] font-semibold flex items-center justify-center gap-1 transition-all"
+                      title="Ask questions with citations from this document"
+                    >
+                      <Sparkles className="w-3 h-3 text-[#C084FC]" /> Ask AI
+                    </Link>
+                    <Link
+                      href={`/dashboard/quiz?document_id=${doc.id}`}
+                      className="flex-1 py-1 px-2 rounded-lg bg-[#181026] hover:bg-[#25153D] text-emerald-400 hover:text-white border border-[#352150] text-[10px] font-semibold flex items-center justify-center gap-1 transition-all"
+                      title="Generate dynamic assessment from this document"
+                    >
+                      <CheckCircle2 className="w-3 h-3 text-emerald-400" /> Quiz
+                    </Link>
+                    <Link
+                      href={`/dashboard/notes?document_id=${doc.id}`}
+                      className="flex-1 py-1 px-2 rounded-lg bg-[#181026] hover:bg-[#25153D] text-[#A855F7] hover:text-white border border-[#352150] text-[10px] font-semibold flex items-center justify-center gap-1 transition-all"
+                      title="Generate structured study notes from this document"
+                    >
+                      <BookOpen className="w-3 h-3 text-[#A855F7]" /> Notes
+                    </Link>
+                  </div>
+                )}
               </GlowCard>
             ))}
           </div>

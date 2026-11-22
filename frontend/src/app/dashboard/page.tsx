@@ -32,6 +32,7 @@ import {
   CareerRecommendation,
   StudyPlan,
   TopicPerformance,
+  EcosystemSummaryResponse,
 } from "@/lib/types";
 
 export default function DashboardOverviewPage() {
@@ -39,19 +40,22 @@ export default function DashboardOverviewPage() {
   const [analytics, setAnalytics] = useState<AnalyticsDashboard | null>(null);
   const [recommendations, setRecommendations] = useState<CareerRecommendation[]>([]);
   const [studyPlan, setStudyPlan] = useState<StudyPlan | null>(null);
+  const [ecosystem, setEcosystem] = useState<EcosystemSummaryResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function fetchData() {
       try {
-        const [anData, recData, planData] = await Promise.all([
+        const [anData, recData, planData, ecoData] = await Promise.all([
           api.getDashboardAnalytics().catch(() => null),
           api.getCareerRecommendations().catch(() => []),
           api.getActiveStudyPlan().catch(() => null),
+          api.getEcosystemSummary().catch(() => null),
         ]);
         if (anData) setAnalytics(anData);
         setRecommendations(recData);
         if (planData) setStudyPlan(planData);
+        if (ecoData) setEcosystem(ecoData);
       } catch (e) {
         console.error("Dashboard data load error:", e);
       } finally {
@@ -150,6 +154,54 @@ export default function DashboardOverviewPage() {
           </div>
         </GlowCard>
       </div>
+
+      {/* Ecosystem Action Center */}
+      {ecosystem?.recommendations && ecosystem.recommendations.length > 0 && (
+        <div className="p-5 rounded-2xl bg-[#140D20] border border-[#30203F] shadow-[0_0_20px_-5px_rgba(168,85,247,0.15)]">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-[#C084FC]" />
+              <h2 className="text-xs sm:text-sm font-bold text-white tracking-wide uppercase">
+                Connected Ecosystem Actions
+              </h2>
+            </div>
+            <span className="text-[11px] text-[#A1A1AA]">
+              Cross-module recommendations tailored to your active learning & goals
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {ecosystem.recommendations.map((rec, idx) => (
+              <div
+                key={idx}
+                className="p-3.5 rounded-xl bg-[#100B18] border border-[#30203F] hover:border-purple-500/40 flex flex-col justify-between transition-all group"
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded bg-purple-500/20 text-[#C084FC] border border-purple-500/30">
+                      {rec.source}
+                    </span>
+                    <span className={`text-[10px] font-semibold ${rec.priority === "High" ? "text-amber-400" : "text-[#A1A1AA]"}`}>
+                      {rec.priority} Priority
+                    </span>
+                  </div>
+                  <div className="text-xs font-semibold text-white group-hover:text-[#C084FC] transition-colors line-clamp-2">
+                    {rec.title}
+                  </div>
+                </div>
+
+                <Link
+                  href={rec.action_url}
+                  className="mt-3 inline-flex items-center justify-between text-[11px] font-bold text-[#C084FC] hover:text-white transition-colors pt-2 border-t border-[#30203F]"
+                >
+                  <span>{rec.action_label}</span>
+                  <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
+                </Link>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Main Grid: Learning Activity Chart & Priority Weak Topics */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

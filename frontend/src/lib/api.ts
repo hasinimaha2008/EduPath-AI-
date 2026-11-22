@@ -9,7 +9,8 @@ import {
   CareerProjectItem, CareerPathwayItem,
   StudentCareerProfile, StudentProfileUpdateRequest,
   StudyTask, StudyPlanGenerateOptions, StudyTaskCreateInput, StudyTaskUpdateInput,
-  AdaptiveRecommendationItem, PlannerProgress, RescheduleMissedResponse
+  AdaptiveRecommendationItem, PlannerProgress, RescheduleMissedResponse,
+  EcosystemSummaryResponse
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
@@ -595,6 +596,10 @@ class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
+  }
+
+  async getEcosystemSummary(): Promise<EcosystemSummaryResponse> {
+    return this.request<EcosystemSummaryResponse>("/api/workspace/ecosystem-summary");
   }
 
   // --- Smart Notifications (Upgrade 8) ---

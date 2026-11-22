@@ -127,6 +127,32 @@ export default function AIQuizGeneratorPage() {
       if (subs.length > 0) {
         setSelectedSubjectId(subs[0].id);
       }
+
+      // Cross-module ecosystem deep-linking: preselect source tabs and items
+      if (typeof window !== "undefined") {
+        const urlParams = new URLSearchParams(window.location.search);
+        const docParam = urlParams.get("document_id");
+        const noteParam = urlParams.get("note_id");
+        const topicParam = urlParams.get("topic_id");
+        const subParam = urlParams.get("subject_id");
+
+        if (docParam) {
+          setSourceType("document");
+          setSelectedDocId(docParam);
+        } else if (noteParam) {
+          setSourceType("note");
+          setSelectedNoteId(noteParam);
+        } else if (topicParam) {
+          setSourceType("curriculum");
+          setSelectedTopicId(topicParam);
+          if (subParam) {
+            setSelectedSubjectId(subParam);
+          } else {
+            const parentSub = subs.find((s) => s.topics?.some((t) => t.id === topicParam));
+            if (parentSub) setSelectedSubjectId(parentSub.id);
+          }
+        }
+      }
     } catch (e) {
       console.error("Error loading prerequisites:", e);
     } finally {

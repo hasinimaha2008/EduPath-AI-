@@ -53,3 +53,15 @@ async def explain_concept(
         subject_name=req.subject_name,
         context_notes=req.context_notes
     )
+
+@router.get("/ecosystem-summary")
+async def get_ecosystem_summary(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db)
+):
+    """
+    Returns unified ecosystem summary aggregating documents, notes, quizzes,
+    analytics, active study plan, career readiness, and actionable recommendations.
+    """
+    return await intelligence_engine.get_ecosystem_summary(session, current_user.id)
+

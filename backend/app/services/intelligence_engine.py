@@ -296,7 +296,7 @@ class EduPathIntelligenceEngine:
             # Synchronize linked skills
             await EduPathIntelligenceEngine._sync_topic_to_user_skills(session, user_id, topic_id, tp.accuracy_percentage)
 
-            # 4. WORKFLOW A: Weak Topic Loop & Spaced Repetition Trigger
+            # 4. WORKFLOW A & B: Connected Ecosystem Adaptive Feedback
             if percentage < 70.0 or tp.mastery_status in ["needs_practice", "developing"]:
                 # Schedule Ebbinghaus spaced repetition task
                 await personalized_learning_service.schedule_spaced_repetition(
@@ -305,6 +305,37 @@ class EduPathIntelligenceEngine:
                     topic_id=topic_id,
                     latest_percentage=percentage
                 )
+                # WORKFLOW 2: Auto-schedule adaptive revision task into active StudyPlan
+                active_plan_stmt = select(StudyPlan).where(
+                    StudyPlan.user_id == user_id,
+                    StudyPlan.status == "active"
+                ).order_by(StudyPlan.created_at.desc()).limit(1)
+                active_plan_res = await session.execute(active_plan_stmt)
+                active_plan = active_plan_res.scalar_one_or_none()
+                if active_plan:
+                    rev_date = (datetime.now(timezone.utc) + timedelta(days=2)).strftime("%Y-%m-%d")
+                    existing_task_stmt = select(StudyTask).where(
+                        StudyTask.study_plan_id == active_plan.id,
+                        StudyTask.topic_id == topic_id,
+                        StudyTask.task_type == "revision",
+                        StudyTask.is_completed == False
+                    ).limit(1)
+                    existing_task = (await session.execute(existing_task_stmt)).scalar_one_or_none()
+                    if not existing_task:
+                        adaptive_rev_task = StudyTask(
+                            study_plan_id=active_plan.id,
+                            topic_id=topic_id,
+                            title=f"Adaptive Revision: {topic_name}",
+                            description=f"Auto-scheduled review based on quiz performance ({percentage}%). Focus on core concepts and mistake analysis.",
+                            scheduled_date=rev_date,
+                            duration_minutes=45,
+                            priority="High",
+                            task_type="revision",
+                            difficulty_level="hard" if percentage < 50.0 else "medium",
+                            action_url=f"/dashboard/notes?topic={quote(topic_name)}&mode=revision"
+                        )
+                        session.add(adaptive_rev_task)
+
                 # Create Weak Topic Notification
                 notif = Notification(
                     user_id=user_id,
@@ -324,6 +355,38 @@ class EduPathIntelligenceEngine:
                     action_url=f"/dashboard/workspace?topic_id={topic_id}"
                 )
                 session.add(notif)
+
+                # WORKFLOW 3: If score >= 75%, advance matching milestone in active CareerRoadmap
+                if percentage >= 75.0:
+                    active_roadmap_stmt = select(CareerRoadmap).where(
+                        CareerRoadmap.user_id == user_id
+                    ).order_by(CareerRoadmap.updated_at.desc()).limit(1)
+                    active_roadmap_res = await session.execute(active_roadmap_stmt)
+                    active_roadmap = active_roadmap_res.scalar_one_or_none()
+                    if active_roadmap:
+                        ms_stmt = select(RoadmapMilestone).where(
+                            RoadmapMilestone.roadmap_id == active_roadmap.id,
+                            RoadmapMilestone.is_completed == False
+                        ).order_by(RoadmapMilestone.order_index)
+                        milestones = (await session.execute(ms_stmt)).scalars().all()
+
+                        advanced_any = False
+                        topic_lower = topic_name.lower()
+                        for ms in milestones:
+                            ms_text = (ms.title + " " + ms.description).lower()
+                            words = [w for w in topic_lower.split() if len(w) > 3]
+                            if any(w in ms_text for w in words) or (ms.order_index == 0 and percentage >= 80.0):
+                                ms.is_completed = True
+                                advanced_any = True
+                                break
+
+                        if advanced_any:
+                            all_ms_stmt = select(RoadmapMilestone).where(RoadmapMilestone.roadmap_id == active_roadmap.id)
+                            all_ms = (await session.execute(all_ms_stmt)).scalars().all()
+                            if all_ms:
+                                completed_count = sum(1 for m in all_ms if m.is_completed)
+                                active_roadmap.progress_percentage = round((completed_count / len(all_ms)) * 100.0, 1)
+                                active_roadmap.updated_at = datetime.now(timezone.utc)
 
         # 5. Re-evaluate Career Intelligence (Workflow B)
         await EduPathIntelligenceEngine.recalculate_career_intelligence(session, user_id)
@@ -426,6 +489,39 @@ class EduPathIntelligenceEngine:
                 user_skill.verified = True
                 user_skill.evidence_notes = f"Updated via quiz evaluation in competency: {m.competency_name}"
                 user_skill.last_evaluated_at = datetime.now(timezone.utc)
+
+        # Fallback / augment: Match skills directly by name with topic name
+        topic_obj = (await session.execute(select(Topic).where(Topic.id == topic_id))).scalar_one_or_none()
+        if topic_obj:
+            all_skills = (await session.execute(select(Skill))).scalars().all()
+            t_name_lower = topic_obj.name.lower()
+            for s in all_skills:
+                s_name_lower = s.name.lower()
+                if (s_name_lower in t_name_lower or t_name_lower in s_name_lower) and s.id not in seen_skill_ids:
+                    seen_skill_ids.add(s.id)
+                    us_stmt = select(UserSkill).where(
+                        UserSkill.user_id == user_id,
+                        UserSkill.skill_id == s.id
+                    ).limit(1)
+                    us_res = await session.execute(us_stmt)
+                    user_skill = us_res.scalars().first()
+                    if not user_skill:
+                        user_skill = UserSkill(
+                            user_id=user_id,
+                            skill_id=s.id,
+                            proficiency_level=accuracy,
+                            source="demonstrated",
+                            evidence_notes=f"Demonstrated via quiz evaluations in: {topic_obj.name}",
+                            verified=True,
+                            last_evaluated_at=datetime.now(timezone.utc)
+                        )
+                        session.add(user_skill)
+                    else:
+                        user_skill.proficiency_level = round((user_skill.proficiency_level * 0.4) + (accuracy * 0.6), 1)
+                        user_skill.source = "demonstrated"
+                        user_skill.verified = True
+                        user_skill.evidence_notes = f"Updated via quiz evaluation in: {topic_obj.name}"
+                        user_skill.last_evaluated_at = datetime.now(timezone.utc)
 
     ROLE_DOMAINS = {
         "Python Developer": "Software Development",
@@ -1754,6 +1850,270 @@ class EduPathIntelligenceEngine:
             "exam_countdown_days": countdown,
             "learning_streak_days": streak,
             "weak_topics_covered_count": weak_covered
+        }
+
+    @staticmethod
+    async def get_ecosystem_summary(session: AsyncSession, user_id: str) -> Dict[str, Any]:
+        """
+        WORKFLOW 4: Connected Ecosystem Snapshot.
+        Aggregates cross-module status, telemetry, and actionable recommendations
+        connecting documents, notes, quizzes, analytics, study plans, and career roadmaps.
+        """
+        today_date = datetime.now(timezone.utc).date()
+        today_str = today_date.strftime("%Y-%m-%d")
+
+        # 1. User & Learning Profile
+        user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+        profile = await EduPathIntelligenceEngine.get_or_create_learning_profile(session, user_id)
+        
+        target_role = None
+        if profile.target_career_id:
+            target_role = (await session.execute(select(CareerRole).where(CareerRole.id == profile.target_career_id))).scalar_one_or_none()
+
+        # 2. Documents Summary
+        docs_res = await session.execute(
+            select(Document).where(Document.user_id == user_id).order_by(Document.created_at.desc())
+        )
+        docs = docs_res.scalars().all()
+        recent_docs = [
+            {
+                "id": d.id,
+                "title": d.title,
+                "file_type": d.file_type,
+                "status": d.status,
+                "created_at": d.created_at
+            }
+            for d in docs[:5]
+        ]
+
+        # 3. Notes Summary
+        notes_res = await session.execute(
+            select(Note).where(Note.user_id == user_id).order_by(Note.created_at.desc())
+        )
+        notes = notes_res.scalars().all()
+        recent_notes = [
+            {
+                "id": n.id,
+                "title": n.title,
+                "format_type": n.note_type,
+                "topic_id": n.topic_id,
+                "created_at": n.created_at
+            }
+            for n in notes[:5]
+        ]
+
+        # 4. Quizzes & Analytics Summary
+        attempts_res = await session.execute(
+            select(QuizAttempt, Quiz.title, Quiz.topic_id).join(
+                Quiz, QuizAttempt.quiz_id == Quiz.id
+            ).where(QuizAttempt.user_id == user_id).order_by(QuizAttempt.completed_at.desc())
+        )
+        attempts = attempts_res.all()
+        total_attempts = len(attempts)
+        avg_score = round(sum(a[0].percentage for a in attempts) / total_attempts, 1) if total_attempts > 0 else 0.0
+        recent_quizzes = [
+            {
+                "id": a[0].id,
+                "quiz_id": a[0].quiz_id,
+                "title": a[1],
+                "score": a[0].score,
+                "max_score": a[0].max_score,
+                "percentage": a[0].percentage,
+                "completed_at": a[0].completed_at
+            }
+            for a in attempts[:5]
+        ]
+
+        # Performance / Mastery
+        tp_res = await session.execute(
+            select(TopicPerformance, Topic.name).join(
+                Topic, TopicPerformance.topic_id == Topic.id
+            ).where(TopicPerformance.user_id == user_id)
+        )
+        tp_rows = tp_res.all()
+        weak_topics = []
+        mastered_topics = []
+        developing_topics = []
+        for tp, t_name in tp_rows:
+            t_data = {"topic_id": tp.topic_id, "name": t_name, "accuracy": tp.accuracy_percentage, "mastery": tp.mastery_status}
+            if tp.mastery_status in ["needs_practice", "developing"] or tp.accuracy_percentage < 70.0:
+                weak_topics.append(t_data)
+            elif tp.mastery_status == "mastered":
+                mastered_topics.append(t_data)
+            else:
+                developing_topics.append(t_data)
+
+        # 5. Active Study Plan & Tasks
+        plan_res = await session.execute(
+            select(StudyPlan).where(
+                StudyPlan.user_id == user_id,
+                StudyPlan.status == "active"
+            ).order_by(StudyPlan.created_at.desc()).limit(1)
+        )
+        active_plan = plan_res.scalar_one_or_none()
+        plan_summary = None
+        today_tasks_list = []
+        if active_plan:
+            tasks_res = await session.execute(
+                select(StudyTask).where(StudyTask.study_plan_id == active_plan.id).order_by(StudyTask.scheduled_date.asc())
+            )
+            tasks = tasks_res.scalars().all()
+            completed_tasks = [t for t in tasks if t.is_completed]
+            pending_tasks = [t for t in tasks if not t.is_completed]
+            today_tasks = [t for t in tasks if t.scheduled_date == today_str]
+            today_tasks_list = [
+                {
+                    "id": t.id,
+                    "title": t.title,
+                    "task_type": t.task_type,
+                    "priority": t.priority,
+                    "duration_minutes": t.duration_minutes,
+                    "is_completed": t.is_completed,
+                    "action_url": t.action_url
+                }
+                for t in today_tasks
+            ]
+            plan_summary = {
+                "id": active_plan.id,
+                "title": active_plan.title,
+                "exam_date": active_plan.exam_date,
+                "total_tasks": len(tasks),
+                "completed_tasks": len(completed_tasks),
+                "pending_tasks": len(pending_tasks),
+                "adherence_rate": round((len(completed_tasks) / len(tasks)) * 100.0, 1) if tasks else 0.0
+            }
+
+        # 6. Career Readiness & Active Roadmap
+        career_rec = None
+        if target_role:
+            career_rec_res = await session.execute(
+                select(CareerRecommendation).where(
+                    CareerRecommendation.user_id == user_id,
+                    CareerRecommendation.career_role_id == target_role.id
+                ).limit(1)
+            )
+            career_rec = career_rec_res.scalar_one_or_none()
+
+        roadmap_res = await session.execute(
+            select(CareerRoadmap).where(
+                CareerRoadmap.user_id == user_id
+            ).order_by(CareerRoadmap.updated_at.desc()).limit(1)
+        )
+        roadmap = roadmap_res.scalar_one_or_none()
+        roadmap_summary = None
+        if roadmap:
+            ms_res = await session.execute(
+                select(RoadmapMilestone).where(RoadmapMilestone.roadmap_id == roadmap.id).order_by(RoadmapMilestone.order_index)
+            )
+            milestones = ms_res.scalars().all()
+            completed_ms = [m for m in milestones if m.is_completed]
+            roadmap_summary = {
+                "id": roadmap.id,
+                "title": roadmap.title,
+                "progress_percentage": roadmap.progress_percentage,
+                "completed_milestones": len(completed_ms),
+                "total_milestones": len(milestones),
+                "next_milestone": next((m.title for m in milestones if not m.is_completed), None)
+            }
+
+        # Missing skills for target career
+        missing_skills_list = []
+        if target_role:
+            gaps_res = await session.execute(
+                select(SkillGap, Skill.name).join(
+                    Skill, SkillGap.skill_id == Skill.id
+                ).where(
+                    SkillGap.user_id == user_id,
+                    SkillGap.career_role_id == target_role.id,
+                    SkillGap.status.in_(["missing", "needs_improvement"])
+                ).order_by(desc(SkillGap.priority)).limit(5)
+            )
+            missing_skills_list = [f"{row[1]} ({row[0].priority} Priority)" for row in gaps_res.all()]
+
+        # 7. Unified Actionable Cross-Module Recommendations
+        recommendations = []
+
+        # Rec A: Weak topic revision via Smart Notes
+        if weak_topics:
+            wt = weak_topics[0]
+            recommendations.append({
+                "source": "analytics",
+                "category": "weak_topic_revision",
+                "title": f"Revise {wt['name']} (Score: {wt['accuracy']}%)",
+                "action_url": f"/dashboard/notes?topic={quote(wt['name'])}&mode=revision",
+                "action_label": "Generate Revision Notes",
+                "priority": "High"
+            })
+
+        # Rec B: Quiz generation from recently uploaded document
+        if docs:
+            recent_doc = docs[0]
+            recommendations.append({
+                "source": "documents",
+                "category": "doc_to_quiz",
+                "title": f"Test knowledge on '{recent_doc.title}'",
+                "action_url": f"/dashboard/quiz?document_id={recent_doc.id}",
+                "action_label": "Generate Quiz",
+                "priority": "Medium"
+            })
+
+        # Rec C: Active roadmap milestone advancement
+        if roadmap_summary and roadmap_summary.get("next_milestone"):
+            recommendations.append({
+                "source": "career",
+                "category": "career_milestone",
+                "title": f"Advance milestone: '{roadmap_summary['next_milestone']}'",
+                "action_url": "/dashboard/roadmaps",
+                "action_label": "Open Career Roadmap",
+                "priority": "High"
+            })
+
+        # Rec D: Today's scheduled study task
+        if today_tasks_list:
+            incomplete_today = [t for t in today_tasks_list if not t["is_completed"]]
+            if incomplete_today:
+                first_task = incomplete_today[0]
+                recommendations.append({
+                    "source": "planner",
+                    "category": "daily_study_task",
+                    "title": f"Scheduled today: {first_task['title']}",
+                    "action_url": first_task.get("action_url") or "/dashboard/study-planner",
+                    "action_label": "Start Task",
+                    "priority": first_task.get("priority", "Medium")
+                })
+
+        return {
+            "user_id": user_id,
+            "user_name": user.full_name if user else "Student",
+            "target_career": {
+                "id": target_role.id if target_role else None,
+                "title": target_role.title if target_role else "Software Engineer",
+                "readiness_score": career_rec.match_score if career_rec else 0.0,
+                "missing_skills": missing_skills_list
+            },
+            "documents_summary": {
+                "total_documents": len(docs),
+                "recent_documents": recent_docs
+            },
+            "notes_summary": {
+                "total_notes": len(notes),
+                "recent_notes": recent_notes
+            },
+            "quizzes_summary": {
+                "total_attempts": total_attempts,
+                "average_score": avg_score,
+                "recent_quizzes": recent_quizzes
+            },
+            "analytics_summary": {
+                "topics_mastered_count": len(mastered_topics),
+                "topics_developing_count": len(developing_topics),
+                "weak_topics_count": len(weak_topics),
+                "weak_topics": weak_topics[:5]
+            },
+            "study_plan": plan_summary,
+            "today_tasks": today_tasks_list,
+            "career_roadmap": roadmap_summary,
+            "recommendations": recommendations
         }
 
 intelligence_engine = EduPathIntelligenceEngine()

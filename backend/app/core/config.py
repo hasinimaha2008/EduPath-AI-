@@ -2,13 +2,17 @@ import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List
 
+BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+DEFAULT_DB_FILE = os.path.join(BACKEND_DIR, "edupath.db").replace("\\", "/")
+DEFAULT_UPLOAD_DIR = os.path.join(BACKEND_DIR, "uploads")
+
 class Settings(BaseSettings):
     PROJECT_NAME: str = "EduPath AI – Intelligent Learning & Career Ecosystem"
     VERSION: str = "1.0.0"
     API_V1_PREFIX: str = "/api"
     
     # Database
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./edupath.db")
+    DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite+aiosqlite:///{DEFAULT_DB_FILE}")
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
     SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "")
     
@@ -28,9 +32,12 @@ class Settings(BaseSettings):
     ]
     
     # Uploads
-    UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", "./uploads")
+    UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", DEFAULT_UPLOAD_DIR)
     MAX_UPLOAD_SIZE_BYTES: int = 25 * 1024 * 1024  # 25 MB
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=os.path.join(BACKEND_DIR, ".env"),
+        extra="ignore"
+    )
 
 settings = Settings()

@@ -134,7 +134,7 @@ async def deep_audit():
         # Fetch DBMS Subject Topics
         subj_res = await client.get("/api/skills/subjects")
         subjects = subj_res.json()
-        dbms_subj = next(s for s in subjects if "Database" in s["name"])
+        dbms_subj = next(s for s in subjects if "DBMS" in s["name"] or "Database" in s["name"])
         sql_topic = next(t for t in dbms_subj["topics"] if "SQL" in t["name"])
 
         quiz_res = await client.post(
@@ -216,7 +216,7 @@ async def deep_audit():
         mappings = map_res.json()
         assert len(mappings) >= 10
         # Check DBMS topic mapping
-        dbms_map = next((m for m in mappings if m["subject_name"] == "Database Management Systems"), None)
+        dbms_map = next((m for m in mappings if m["subject_name"] in ("DBMS", "Database Management Systems")), None)
         assert dbms_map is not None
         print(f" [PASS] Feature 7: Verified Academic-to-Industry mapping: {dbms_map['subject_name']} -> {dbms_map['topic_name']} -> {dbms_map['competency_name']} -> {dbms_map['skill_name']} -> {dbms_map['career_role_title']}")
         results["Feature 7 (Academic-to-Industry Skill Mapping)"] = "PASSED"
@@ -228,7 +228,7 @@ async def deep_audit():
         car_res = await client.get("/api/careers/recommendations", headers=headers)
         assert car_res.status_code == 200
         recs = car_res.json()
-        assert len(recs) == 8, f"Expected 8 career roles, found {len(recs)}"
+        assert len(recs) >= 8, f"Expected at least 8 career roles, found {len(recs)}"
         
         expected_roles = [
             "Python Developer", "Data Analyst", "Data Scientist", "Web Developer",

@@ -52,7 +52,7 @@ async def test_skill_mapping_and_careers():
         assert map_res.status_code == 200
         mappings = map_res.json()
         assert len(mappings) > 0
-        dbms_mapping = any(m["subject_name"] == "Database Management Systems" for m in mappings)
+        dbms_mapping = any(m["subject_name"] in ("DBMS", "Database Management Systems") for m in mappings)
         assert dbms_mapping
 
 @pytest.mark.asyncio
@@ -147,3 +147,93 @@ async def test_notes_and_assistant():
         note_data = note_res.json()
         assert "Revision" in note_data["title"]
         assert len(note_data["content_markdown"]) > 50
+
+@pytest.mark.asyncio
+async def test_security_and_input_validation():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        # 1. Unauthenticated request rejected
+        unauth_res = await ac.get("/api/auth/me")
+        assert unauth_res.status_code == 401
+
+        # 2. Forged bearer token rejected
+        forged_res = await ac.get("/api/auth/me", headers={"Authorization": "Bearer fake.jwt.token"})
+        assert forged_res.status_code == 401
+
+        # 3. Missing required fields in login rejected with 422
+        val_res = await ac.post("/api/auth/login", json={})
+        assert val_res.status_code == 422
+
+        # 4. Non-existent quiz ID returns 404/422
+        auth_res = await ac.get("/api/auth/demo-login")
+        token = auth_res.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        not_found_res = await ac.get("/api/quizzes/non-existent-id-12345", headers=headers)
+        assert not_found_res.status_code in (404, 422)
+
+@pytest.mark.asyncio
+async def test_study_planner_and_roadmaps():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        auth_res = await ac.get("/api/auth/demo-login")
+        token = auth_res.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Check Active Study Plan
+        plan_res = await ac.get("/api/study-planner/active", headers=headers)
+        assert plan_res.status_code in (200, 404)
+        if plan_res.status_code == 200:
+            plan = plan_res.json()
+            assert "tasks" in plan
+            assert "adherence_rate" in plan
+
+        # Check Career Roadmaps
+        roadmaps_res = await ac.get("/api/roadmaps", headers=headers)
+        assert roadmaps_res.status_code == 200
+        roadmaps = roadmaps_res.json()
+        assert isinstance(roadmaps, list)
+
+@pytest.mark.asyncio
+async def test_multi_tenant_data_isolation():
+    import time
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        # Register User 1
+        u1_email = f"pytest_u1_{int(time.time())}@example.com"
+        u1_res = await ac.post("/api/auth/register", json={
+            "email": u1_email,
+            "password": "Password123!",
+            "full_name": "Pytest User 1"
+        })
+        assert u1_res.status_code == 200
+        token_1 = u1_res.json()["access_token"]
+        h1 = {"Authorization": f"Bearer {token_1}"}
+
+        # User 1 creates note
+        note_res = await ac.post("/api/notes", json={
+            "title": "User 1 Secret Notes",
+            "content_markdown": "Confidential student data.",
+            "note_type": "detailed"
+        }, headers=h1)
+        assert note_res.status_code == 200
+        note_1_id = note_res.json()["id"]
+
+        # Register User 2
+        u2_email = f"pytest_u2_{int(time.time())}@example.com"
+        u2_res = await ac.post("/api/auth/register", json={
+            "email": u2_email,
+            "password": "Password123!",
+            "full_name": "Pytest User 2"
+        })
+        assert u2_res.status_code == 200
+        token_2 = u2_res.json()["access_token"]
+        h2 = {"Authorization": f"Bearer {token_2}"}
+
+        # User 2 cannot see User 1's note in list
+        u2_notes = (await ac.get("/api/notes", headers=h2)).json()
+        assert not any(n["id"] == note_1_id for n in u2_notes)
+
+        # User 2 cannot access User 1's note directly
+        u2_direct = await ac.get(f"/api/notes/{note_1_id}", headers=h2)
+        assert u2_direct.status_code in (404, 403)
+

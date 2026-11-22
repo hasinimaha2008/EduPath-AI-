@@ -70,8 +70,11 @@ async def generate_quiz(
                 topic_title = note.title
             if note.subject_id and not req.subject_id:
                 req.subject_id = note.subject_id
-            if not req.topic_id and note.topic_name:
-                top_stmt = select(Topic).where(Topic.name.ilike(f"%{note.topic_name}%")).limit(1)
+            if not req.topic_id and getattr(note, "topic_id", None):
+                req.topic_id = note.topic_id
+            if not req.topic_id and note.title:
+                clean_title_part = note.title.split("–")[0].split("-")[0].strip()
+                top_stmt = select(Topic).where(Topic.name.ilike(f"%{clean_title_part}%")).limit(1)
                 matched_top = (await session.execute(top_stmt)).scalars().first()
                 if matched_top:
                     req.topic_id = matched_top.id

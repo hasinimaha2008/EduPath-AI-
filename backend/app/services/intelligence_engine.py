@@ -11,6 +11,7 @@ Interconnects:
 
 import json
 import logging
+import re
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -115,7 +116,24 @@ class EduPathIntelligenceEngine:
             user_resp = answer_lookup.get(q.id, "").strip()
             q_type = q.question_type or "mcq"
 
-            if q_type == "multiple_select":
+            if q_type == "true_false":
+                user_clean = user_resp.strip().lower()
+                corr_clean = q.correct_answer.strip().lower()
+                is_correct = (user_clean == corr_clean) or (
+                    user_clean in ["true", "t", "1"] and corr_clean in ["true", "t", "1"]
+                ) or (
+                    user_clean in ["false", "f", "0"] and corr_clean in ["false", "f", "0"]
+                )
+                pts = float(q.points) if is_correct else 0.0
+                fb = q.explanation
+            elif q_type == "fill_in_the_blank":
+                # Normalize spaces, casing, and punctuation for robust comparison
+                norm_user = re.sub(r'[^a-zA-Z0-9]', '', user_resp.lower())
+                norm_corr = re.sub(r'[^a-zA-Z0-9]', '', q.correct_answer.lower())
+                is_correct = (norm_user == norm_corr) or (user_resp.strip().lower() == q.correct_answer.strip().lower())
+                pts = float(q.points) if is_correct else 0.0
+                fb = q.explanation
+            elif q_type == "multiple_select":
                 user_selected = {x.strip().lower() for x in user_resp.replace(";", ",").split(",") if x.strip()}
                 correct_selected = {x.strip().lower() for x in q.correct_answer.replace(";", ",").split(",") if x.strip()}
                 if user_selected == correct_selected and len(correct_selected) > 0:
@@ -309,6 +327,29 @@ class EduPathIntelligenceEngine:
         # 5. Re-evaluate Career Intelligence (Workflow B)
         await EduPathIntelligenceEngine.recalculate_career_intelligence(session, user_id)
 
+        # Phase 4: Topic breakdown and recommended revision topics
+        topic_breakdown = {
+            "topic_name": topic_name,
+            "total_questions": len(questions),
+            "correct_count": sum(1 for ea in evaluated_answers if ea["is_correct"]),
+            "accuracy": percentage,
+            "mastery_status": tp.mastery_status if tp else "developing"
+        }
+
+        recommended_revision_topics = []
+        for ea in evaluated_answers:
+            if not ea["is_correct"]:
+                q_text = ea["question"].question_text
+                clean_q = re.sub(r'\[.*?\]\s*', '', q_text).strip()
+                rec_title = f"{topic_name}: {clean_q[:65]}..." if len(clean_q) > 65 else f"{topic_name}: {clean_q}"
+                if rec_title not in recommended_revision_topics:
+                    recommended_revision_topics.append(rec_title)
+
+        if not recommended_revision_topics and percentage < 100.0:
+            recommended_revision_topics.append(f"Review core principles of {topic_name}")
+        elif not recommended_revision_topics:
+            recommended_revision_topics.append(f"Advanced concepts and applications in {topic_name}")
+
         await session.commit()
 
         return {
@@ -321,6 +362,8 @@ class EduPathIntelligenceEngine:
             "completed_at": attempt.completed_at,
             "mistakes_recorded": mistakes_recorded,
             "mastery_status": tp.mastery_status if tp else "unspecified",
+            "topic_breakdown": topic_breakdown,
+            "recommended_revision_topics": recommended_revision_topics,
             "answers": [
                 {
                     "question_id": ea["question"].id,

@@ -183,7 +183,8 @@ class QuizCreateRequest(BaseModel):
     topic_id: Optional[str] = None
     subtopic: Optional[str] = None
     document_id: Optional[str] = None
-    difficulty: str = "medium"  # beginner, intermediate, advanced, easy, medium, hard
+    note_id: Optional[str] = None
+    difficulty: str = "medium"  # easy, medium, hard, mixed, beginner, intermediate, advanced
     question_count: int = 5
     question_types: List[str] = ["mcq"]
 
@@ -196,6 +197,7 @@ class QuizResponse(BaseModel):
     subject_id: Optional[str] = None
     topic_id: Optional[str] = None
     document_id: Optional[str] = None
+    note_id: Optional[str] = None
     created_at: datetime
     questions: List[QuestionResponse] = []
 
@@ -227,6 +229,10 @@ class QuizResultResponse(BaseModel):
     time_taken_seconds: int
     completed_at: datetime
     answers: List[UserAnswerResult]
+    mastery_status: Optional[str] = None
+    topic_breakdown: Optional[Dict[str, Any]] = None
+    recommended_revision_topics: Optional[List[str]] = None
+    mistakes_recorded: Optional[List[Dict[str, Any]]] = None
 
 class QuizAttemptHistoryItem(BaseModel):
     id: str

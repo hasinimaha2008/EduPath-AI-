@@ -791,50 +791,58 @@ class {topic_name.replace(' ', '').replace('-', '')}Manager:
         subtopic: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
-        Generates questions for all 8 question types:
+        Generates questions for all question types:
         - mcq (Multiple Choice Questions)
-        - multiple_select (Multiple Select Questions)
+        - true_false (True or False)
+        - fill_in_the_blank (Fill in the Blanks)
         - short_answer (Short-answer questions)
+        - multiple_select (Multiple Select Questions)
         - long_answer (Long-answer questions)
         - technical_interview (Technical interview questions)
         - programming (Programming questions)
         - scenario_based (Scenario-based questions)
         - application_oriented (Application-oriented questions)
-        Supports Beginner, Intermediate, and Advanced difficulty levels.
+        Supports Easy/Beginner, Medium/Intermediate, Hard/Advanced, and Mixed difficulty levels.
         """
         if not question_types:
             question_types = ["mcq"]
 
         primary_type = question_types[0] if question_types else "mcq"
         topic_context = f"{topic_name}" + (f" (Subtopic: {subtopic})" if subtopic else "")
+        is_mixed = difficulty.lower() == "mixed"
 
         prompt = f"""
 You are EduPath AI Expert Question Generator and Assessment Architect.
 Topic: {topic_context}
-Difficulty Level: {difficulty.upper()} (Beginner, Intermediate, Advanced)
+Difficulty Level: {('MIXED (Easy, Medium, Hard distribution)' if is_mixed else difficulty.upper())}
 Target Question Count: {question_count}
 Requested Question Type: {primary_type}
 
 Source Context / Syllabus:
 {source_text[:4000]}
 
-Generate exactly {question_count} rigorous, pedagogically sound questions of type '{primary_type}' matching difficulty '{difficulty}'.
+Generate exactly {question_count} rigorous, pedagogically sound, UNIQUE questions of type '{primary_type}' matching difficulty '{difficulty}'.
 Format requirements by question type:
 - mcq: 'options' array with exactly 4 distinct choices, 'correct_answer' string exactly matching one option.
-- multiple_select: 'options' array with 4-5 choices, 'correct_answer' array of 2 or more correct options or comma-separated string.
+- true_false: 'options' array with ["True", "False"], 'correct_answer' either "True" or "False", 'explanation' clear reason why.
+- fill_in_the_blank: 'question_text' containing a blank '_________', 'options' array with 4 distinct choices (one of which is correct), 'correct_answer' the exact fill term, 'explanation' context.
 - short_answer: 'options' null, 'correct_answer' concise 1-2 sentence reference model answer, 'explanation' key terminology rubric.
+- multiple_select: 'options' array with 4-5 choices, 'correct_answer' array of 2 or more correct options or comma-separated string.
 - long_answer: 'options' null, 'correct_answer' detailed multi-part model answer, 'explanation' scoring criteria.
 - technical_interview: 'options' null, real tech interview scenario, 'correct_answer' optimal response with architectural tradeoffs, 'explanation' follow-up questions interviewer would ask.
 - programming: 'options' null, 'code_snippet' starter code template/signature, 'correct_answer' complete reference solution code, 'test_cases' array of example inputs/outputs.
 - scenario_based: 'options' null or 4 options, enterprise production incident or engineering dilemma, 'correct_answer' root-cause diagnosis or best remediation action.
 - application_oriented: 'options' null or 4 options, real-world case study applying theory to production systems.
 
+DEDUPLICATION REQUIREMENT:
+All {question_count} questions MUST be distinct, covering different aspects of the topic. Avoid duplicate phrasing, options, or concepts.
+
 Return ONLY a valid JSON array of objects with schema:
 [
   {{
     "question_text": "Detailed question text...",
     "question_type": "{primary_type}",
-    "options": ["A", "B", "C", "D"], // or null if open-ended
+    "options": ["A", "B", "C", "D"], // or ["True", "False"] for true_false, or null if open-ended
     "correct_answer": "Reference answer or correct choice",
     "explanation": "Pedagogical explanation with rationale and context.",
     "points": 1,
@@ -851,17 +859,112 @@ Respond strictly with valid JSON array only, without markdown fences or addition
                 clean_text = re.sub(r'```$', '', clean_text).strip()
                 data = json.loads(clean_text)
                 if isinstance(data, list) and len(data) > 0:
-                    return data
+                    unique_list = []
+                    seen = set()
+                    for item in data:
+                        t = item.get("question_text", "").strip().lower()
+                        if t and t not in seen:
+                            seen.add(t)
+                            unique_list.append(item)
+                    if len(unique_list) >= question_count:
+                        return unique_list[:question_count]
+                    elif len(unique_list) > 0:
+                        return unique_list
             except Exception as e:
                 logger.error(f"Gemini question generation error: {e}. Utilizing intelligent fallback generator.")
 
         # High-Quality Deterministic Fallback Generator tailored by Question Type and Topic
         questions = []
-        diff_label = difficulty.capitalize()
+        diff_cycle = ["Easy", "Medium", "Hard"]
 
         for i in range(question_count):
             q_num = i + 1
-            if primary_type == "multiple_select":
+            diff_label = diff_cycle[i % 3] if is_mixed else difficulty.capitalize()
+
+            if primary_type == "true_false":
+                tf_pool = [
+                    (
+                        f"[{diff_label}] True or False: In {topic_context}, establishing clear operational invariants is essential for deterministic system execution.",
+                        "True",
+                        f"Operational invariants ensure that state transitions in {topic_context} remain valid and consistent across failure boundaries."
+                    ),
+                    (
+                        f"[{diff_label}] True or False: {topic_context} completely eliminates the need for computational complexity analysis and memory boundary constraints.",
+                        "False",
+                        f"Computational complexity (both time $O(n)$ and space bounds) remains fundamental when designing systems with {topic_context}."
+                    ),
+                    (
+                        f"[{diff_label}] True or False: In multi-threaded environments, {topic_context} requires synchronization primitives or lock-free concurrency to avoid data race hazards.",
+                        "True",
+                        f"Concurrent access to shared structures in {topic_context} requires strict mutual exclusion or atomic operations to preserve integrity."
+                    ),
+                    (
+                        f"[{diff_label}] True or False: In {topic_context}, unindexed sequential searches are always faster than logarithmic tree or hash-based lookups.",
+                        "False",
+                        f"Unindexed linear scans scale at $O(n)$, whereas balanced trees ($O(\\log n)$) and hash tables ($O(1)$) provide vastly superior search performance."
+                    ),
+                    (
+                        f"[{diff_label}] True or False: Applying defensive input validation and exception boundaries to {topic_context} enhances production system resilience.",
+                        "True",
+                        f"Input validation guarantees that anomalous payloads do not trigger unexpected crashes or cascading service degradation in {topic_context}."
+                    )
+                ]
+                q_text, ans, expl = tf_pool[i % len(tf_pool)]
+                questions.append({
+                    "question_text": q_text,
+                    "question_type": "true_false",
+                    "options": ["True", "False"],
+                    "correct_answer": ans,
+                    "explanation": expl,
+                    "points": 1,
+                    "code_snippet": None,
+                    "test_cases": None
+                })
+            elif primary_type == "fill_in_the_blank":
+                fib_pool = [
+                    (
+                        f"[{diff_label}] In {topic_context}, the property ensuring that an operation either completes entirely or leaves system state unchanged is called _________.",
+                        ["Atomicity", "Throughput", "Latency", "Heuristic"],
+                        "Atomicity",
+                        f"Atomicity is an all-or-nothing guarantee that prevents partial state corruption in {topic_context}."
+                    ),
+                    (
+                        f"[{diff_label}] The asymptotic bound that describes the worst-case upper bound of runtime in {topic_context} is denoted by _________ notation.",
+                        ["Big-O", "Little-o", "Omega", "Theta"],
+                        "Big-O",
+                        f"Big-O notation ($O$) defines the theoretical asymptotic upper bound for algorithm growth in {topic_context}."
+                    ),
+                    (
+                        f"[{diff_label}] In {topic_context}, to prevent concurrent race conditions on shared memory buffers, systems enforce _________.",
+                        ["Mutual Exclusion", "Unchecked Casting", "Infinite Recursion", "Page Faults"],
+                        "Mutual Exclusion",
+                        f"Mutual exclusion ensures that at most one process can execute in its critical section modifying {topic_context} state."
+                    ),
+                    (
+                        f"[{diff_label}] The operational metric measuring the number of completed operations per second in {topic_context} is _________.",
+                        ["Throughput", "Latency", "Jitter", "Attenuation"],
+                        "Throughput",
+                        f"Throughput quantifies system processing bandwidth and rate of completion in {topic_context}."
+                    ),
+                    (
+                        f"[{diff_label}] In {topic_context}, a data structure that guarantees $O(\\log n)$ lookup by maintaining a self-balancing binary tree is an _________ tree.",
+                        ["AVL", "Unordered Array", "Circular Queue", "Linked List"],
+                        "AVL",
+                        f"An AVL tree maintains height balance through rotations to provide guaranteed $O(\\log n)$ search, insert, and delete operations."
+                    )
+                ]
+                q_text, opts, ans, expl = fib_pool[i % len(fib_pool)]
+                questions.append({
+                    "question_text": q_text,
+                    "question_type": "fill_in_the_blank",
+                    "options": opts,
+                    "correct_answer": ans,
+                    "explanation": expl,
+                    "points": 1,
+                    "code_snippet": None,
+                    "test_cases": None
+                })
+            elif primary_type == "multiple_select":
                 questions.append({
                     "question_text": f"[{diff_label}] Which of the following statements are TRUE regarding {topic_context}? (Select all that apply)",
                     "question_type": "multiple_select",
@@ -1002,7 +1105,15 @@ Respond strictly with valid JSON array only, without markdown fences or addition
                     "test_cases": None
                 })
 
-        return questions
+        # Ensure fallback questions are deduplicated
+        unique_questions = []
+        seen = set()
+        for q in questions:
+            t = q.get("question_text", "").strip().lower()
+            if t not in seen:
+                seen.add(t)
+                unique_questions.append(q)
+        return unique_questions
 
     async def evaluate_open_answer(
         self,

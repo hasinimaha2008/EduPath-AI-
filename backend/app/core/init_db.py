@@ -28,6 +28,14 @@ async def init_database():
     """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Safe migration: ensure note_id exists on quizzes table
+        def _check_and_add_columns(connection):
+            from sqlalchemy import inspect, text
+            insp = inspect(connection)
+            quiz_cols = [c["name"] for c in insp.get_columns("quizzes")]
+            if "note_id" not in quiz_cols:
+                connection.execute(text("ALTER TABLE quizzes ADD COLUMN note_id VARCHAR(36) REFERENCES notes(id)"))
+        await conn.run_sync(_check_and_add_columns)
     
     async with AsyncSessionLocal() as session:
         logger.info("Synchronizing Multi-Subject Academic Taxonomy (16 Subjects)...")

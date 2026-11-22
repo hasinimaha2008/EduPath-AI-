@@ -378,6 +378,7 @@ class ApiClient {
     topic_id?: string;
     subtopic?: string;
     document_id?: string;
+    note_id?: string;
     difficulty?: string;
     question_count?: number;
     question_types?: string[];
@@ -397,6 +398,10 @@ class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
+  }
+
+  async getQuizAttempt(attemptId: string): Promise<QuizResult> {
+    return this.request<QuizResult>(`/api/quizzes/attempts/${attemptId}`);
   }
 
   async getQuizHistory(): Promise<QuizAttemptHistory[]> {

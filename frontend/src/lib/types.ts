@@ -92,7 +92,7 @@ export interface Question {
   id: string;
   quiz_id: string;
   question_text: string;
-  question_type: "mcq" | "multiple_select" | "short_answer" | "long_answer" | "technical_interview" | "programming" | "scenario_based" | "application_oriented" | string;
+  question_type: "mcq" | "true_false" | "fill_in_the_blank" | "short_answer" | "multiple_select" | "long_answer" | "technical_interview" | "programming" | "scenario_based" | "application_oriented" | string;
   options?: string[];
   points: number;
   code_snippet?: string;
@@ -102,12 +102,13 @@ export interface Question {
 export interface Quiz {
   id: string;
   title: string;
-  difficulty: "beginner" | "intermediate" | "advanced" | "easy" | "medium" | "hard" | string;
+  difficulty: "beginner" | "intermediate" | "advanced" | "easy" | "medium" | "hard" | "mixed" | string;
   total_questions: number;
   time_limit_mins: number;
   subject_id?: string;
   topic_id?: string;
   document_id?: string;
+  note_id?: string;
   created_at: string;
   questions: Question[];
 }
@@ -131,6 +132,15 @@ export interface QuizResult {
   time_taken_seconds: number;
   completed_at: string;
   answers: UserAnswerResult[];
+  mastery_status?: string;
+  topic_breakdown?: {
+    topic_name: string;
+    total_questions: number;
+    correct_count: number;
+    accuracy: number;
+    mastery_status: string;
+  };
+  recommended_revision_topics?: string[];
 }
 
 export interface QuizAttemptHistory {

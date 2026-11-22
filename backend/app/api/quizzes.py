@@ -1,14 +1,15 @@
 import json
+import re
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.database import get_db
 from app.api.deps import get_current_user
-from app.models.models import User, Quiz, Question, QuizAttempt, Document, Topic, DocumentChunk
+from app.models.models import User, Quiz, Question, QuizAttempt, Document, Topic, DocumentChunk, Note, UserAnswer
 from app.schemas.schemas import (
     QuizCreateRequest, QuizResponse, QuestionResponse,
-    QuizSubmitRequest, QuizResultResponse, QuizAttemptHistoryItem
+    QuizSubmitRequest, QuizResultResponse, QuizAttemptHistoryItem, UserAnswerResult
 )
 from app.services.gemini_service import gemini_service
 from app.services.intelligence_engine import intelligence_engine
@@ -45,6 +46,17 @@ async def generate_quiz(
             if not req.title:
                 topic_title = doc.title
 
+    if req.note_id:
+        note_stmt = select(Note).where(Note.id == req.note_id, Note.user_id == current_user.id)
+        note_res = await session.execute(note_stmt)
+        note = note_res.scalar_one_or_none()
+        if note:
+            source_text = note.content_markdown
+            if not req.title:
+                topic_title = note.title
+            if note.subject_id and not req.subject_id:
+                req.subject_id = note.subject_id
+
     if not source_text:
         source_text = f"Curriculum concepts, properties, algorithms, and applications of {topic_title}."
 
@@ -63,6 +75,7 @@ async def generate_quiz(
         subject_id=req.subject_id,
         topic_id=req.topic_id,
         document_id=req.document_id,
+        note_id=req.note_id,
         title=f"{topic_title} – {req.difficulty.capitalize()} Assessment",
         difficulty=req.difficulty,
         total_questions=len(generated_q_list),
@@ -117,6 +130,7 @@ async def generate_quiz(
         subject_id=quiz.subject_id,
         topic_id=quiz.topic_id,
         document_id=quiz.document_id,
+        note_id=quiz.note_id,
         created_at=quiz.created_at,
         questions=clean_questions
     )
@@ -161,6 +175,7 @@ async def get_quiz(
         subject_id=quiz.subject_id,
         topic_id=quiz.topic_id,
         document_id=quiz.document_id,
+        note_id=quiz.note_id,
         created_at=quiz.created_at,
         questions=clean_questions
     )
@@ -212,6 +227,74 @@ async def get_quiz_history(
             )
         )
     return history
+
+@router.get("/attempts/{attempt_id}", response_model=QuizResultResponse)
+async def get_quiz_attempt(
+    attempt_id: str,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db)
+):
+    stmt = select(QuizAttempt).where(QuizAttempt.id == attempt_id, QuizAttempt.user_id == current_user.id)
+    res = await session.execute(stmt)
+    attempt = res.scalar_one_or_none()
+    if not attempt:
+        raise HTTPException(status_code=404, detail="Attempt not found.")
+
+    ans_stmt = select(UserAnswer, Question).join(Question, UserAnswer.question_id == Question.id).where(UserAnswer.attempt_id == attempt.id)
+    ans_res = await session.execute(ans_stmt)
+    pairs = ans_res.all()
+
+    evaluated_answers = []
+    for ua, q in pairs:
+        evaluated_answers.append(
+            UserAnswerResult(
+                question_id=q.id,
+                question_text=q.question_text,
+                user_response=ua.user_response,
+                correct_answer=q.correct_answer,
+                is_correct=ua.is_correct,
+                score_awarded=ua.score_awarded,
+                explanation=q.explanation
+            )
+        )
+
+    q_stmt = select(Quiz).where(Quiz.id == attempt.quiz_id)
+    q_res = await session.execute(q_stmt)
+    quiz = q_res.scalar_one_or_none()
+    topic_name = quiz.title if quiz else "Assessment Topic"
+
+    topic_breakdown = {
+        "topic_name": topic_name,
+        "total_questions": len(evaluated_answers),
+        "correct_count": sum(1 for ea in evaluated_answers if ea.is_correct),
+        "accuracy": attempt.percentage,
+        "mastery_status": "mastered" if attempt.percentage >= 90 else "proficient" if attempt.percentage >= 70 else "developing"
+    }
+
+    recommended_revision_topics = []
+    for ea in evaluated_answers:
+        if not ea.is_correct:
+            clean_q = re.sub(r'\[.*?\]\s*', '', ea.question_text).strip()
+            rec_title = f"{topic_name}: {clean_q[:65]}..." if len(clean_q) > 65 else f"{topic_name}: {clean_q}"
+            if rec_title not in recommended_revision_topics:
+                recommended_revision_topics.append(rec_title)
+
+    if not recommended_revision_topics:
+        recommended_revision_topics.append(f"Review core principles of {topic_name}")
+
+    return QuizResultResponse(
+        attempt_id=attempt.id,
+        quiz_id=attempt.quiz_id,
+        score=attempt.score,
+        max_score=attempt.max_score,
+        percentage=attempt.percentage,
+        time_taken_seconds=attempt.time_taken_seconds,
+        completed_at=attempt.completed_at,
+        answers=evaluated_answers,
+        mastery_status=topic_breakdown["mastery_status"],
+        topic_breakdown=topic_breakdown,
+        recommended_revision_topics=recommended_revision_topics
+    )
 
 @router.post("/generate-adaptive", response_model=QuizResponse)
 async def generate_adaptive_quiz(

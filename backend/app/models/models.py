@@ -186,8 +186,9 @@ class Quiz(Base):
     subject_id = Column(String(36), ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True)
     topic_id = Column(String(36), ForeignKey("topics.id", ondelete="SET NULL"), nullable=True)
     document_id = Column(String(36), ForeignKey("documents.id", ondelete="SET NULL"), nullable=True)
+    note_id = Column(String(36), ForeignKey("notes.id", ondelete="SET NULL"), nullable=True)
     title = Column(String(255), nullable=False)
-    difficulty = Column(String(20), default="medium")  # easy, medium, hard
+    difficulty = Column(String(20), default="medium")  # easy, medium, hard, mixed
     total_questions = Column(Integer, default=5)
     time_limit_mins = Column(Integer, default=15)
     created_at = Column(DateTime(timezone=True), default=get_utc_now)

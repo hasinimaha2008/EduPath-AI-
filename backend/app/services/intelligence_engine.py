@@ -848,6 +848,30 @@ class EduPathIntelligenceEngine:
 
         total_quizzes = len(attempts)
         avg_score = round(sum(a.percentage for a in attempts) / total_quizzes, 1) if total_quizzes > 0 else 0.0
+        highest_score = round(max([a.percentage for a in attempts]), 1) if attempts else 0.0
+
+        # Query attempts joined with Quiz and Subject for trendlines and subject aggregation
+        attempts_with_quiz_stmt = (
+            select(QuizAttempt, Quiz.title, Quiz.subject_id, Subject.name)
+            .join(Quiz, QuizAttempt.quiz_id == Quiz.id, isouter=True)
+            .join(Subject, Quiz.subject_id == Subject.id, isouter=True)
+            .where(QuizAttempt.user_id == user_id)
+            .order_by(QuizAttempt.completed_at.asc())
+        )
+        attempts_with_quiz_res = await session.execute(attempts_with_quiz_stmt)
+        attempts_with_quiz = attempts_with_quiz_res.all()
+
+        quiz_score_trends = [
+            {
+                "attempt_id": att.id,
+                "quiz_title": title or "Assessment Quiz",
+                "percentage": round(att.percentage, 1),
+                "completed_at": att.completed_at.strftime("%b %d, %H:%M") if att.completed_at else "",
+                "score": round(att.score, 1),
+                "max_score": round(att.max_score, 1)
+            }
+            for att, title, s_id, s_name in attempts_with_quiz[-15:]
+        ]
 
         tp_stmt = select(TopicPerformance, Topic.name, Subject.name).join(
             Topic, TopicPerformance.topic_id == Topic.id
@@ -872,7 +896,7 @@ class EduPathIntelligenceEngine:
                 "total_attempts": tp.total_attempts,
                 "correct_answers": tp.correct_answers,
                 "incorrect_answers": tp.incorrect_answers,
-                "accuracy_percentage": tp.accuracy_percentage,
+                "accuracy_percentage": round(tp.accuracy_percentage, 1),
                 "mastery_status": tp.mastery_status,
                 "last_practiced_at": tp.last_practiced_at
             }
@@ -882,7 +906,56 @@ class EduPathIntelligenceEngine:
                 weak_topics.append(item)
                 revision_recs.append(f"Review core principles for {topic_name} (accuracy: {tp.accuracy_percentage}%, attempts: {tp.total_attempts})")
 
-        # Activity by day
+        # Subject performance aggregation from real records
+        subject_data: Dict[str, Dict[str, Any]] = {}
+        for att, title, s_id, s_name in attempts_with_quiz:
+            subj_name = s_name or "General / Core Curriculum"
+            if subj_name not in subject_data:
+                subject_data[subj_name] = {
+                    "subject_id": s_id,
+                    "subject_name": subj_name,
+                    "scores": [],
+                    "topics": set()
+                }
+            subject_data[subj_name]["scores"].append(att.percentage)
+
+        for tp, topic_name, subj_name in tp_records:
+            s_name = subj_name or "General / Core Curriculum"
+            if s_name not in subject_data:
+                subject_data[s_name] = {
+                    "subject_id": tp.subject_id,
+                    "subject_name": s_name,
+                    "scores": [],
+                    "topics": set()
+                }
+            subject_data[s_name]["topics"].add(topic_name)
+
+        subject_performances = []
+        for s_name, s_info in subject_data.items():
+            avg_acc = round(sum(s_info["scores"]) / len(s_info["scores"]), 1) if s_info["scores"] else 0.0
+            subject_performances.append({
+                "subject_id": s_info["subject_id"],
+                "subject_name": s_name,
+                "quizzes_count": len(s_info["scores"]),
+                "topics_practiced": len(s_info["topics"]),
+                "average_accuracy": avg_acc
+            })
+        subject_performances.sort(key=lambda x: (x["quizzes_count"], x["average_accuracy"]), reverse=True)
+
+        # Topic mastery completion breakdown
+        mastered_cnt = sum(1 for tp, _, _ in tp_records if tp.mastery_status == "mastered")
+        proficient_cnt = sum(1 for tp, _, _ in tp_records if tp.mastery_status == "proficient")
+        developing_cnt = sum(1 for tp, _, _ in tp_records if tp.mastery_status == "developing")
+        needs_practice_cnt = sum(1 for tp, _, _ in tp_records if tp.mastery_status == "needs_practice")
+        topic_completion_stats = {
+            "total_practiced": len(tp_records),
+            "mastered_count": mastered_cnt,
+            "proficient_count": proficient_cnt,
+            "developing_count": developing_cnt,
+            "needs_practice_count": needs_practice_cnt
+        }
+
+        # Activity by day (last 7 days)
         today = datetime.now(timezone.utc).date()
         days_map = {}
         for d in range(6, -1, -1):
@@ -899,18 +972,157 @@ class EduPathIntelligenceEngine:
         streak_days = sum(1 for d in recent_activity if d["quiz_count"] > 0)
         total_study_hours = round(sum(a.time_taken_seconds for a in attempts) / 3600.0, 1)
 
+        # Consistency percentage across past 14 days
+        past_14_days = {(today - timedelta(days=d)).strftime("%Y-%m-%d") for d in range(14)}
+        active_days_14 = {a.completed_at.strftime("%Y-%m-%d") for a in attempts if a.completed_at.strftime("%Y-%m-%d") in past_14_days}
+        study_consistency = round((len(active_days_14) / 14.0) * 100.0, 1) if attempts else 0.0
+
+        # Intelligent Insights generation
+        intelligent_insights = []
+
+        # 1. Attention
+        lowest_subject = min([sp for sp in subject_performances if sp["quizzes_count"] > 0], key=lambda x: x["average_accuracy"], default=None)
+        if lowest_subject and lowest_subject["average_accuracy"] < 75.0:
+            intelligent_insights.append({
+                "category": "attention",
+                "title": f"Subject Needs Attention: {lowest_subject['subject_name']}",
+                "message": f"Your average accuracy in {lowest_subject['subject_name']} is currently {lowest_subject['average_accuracy']}%. Focus on foundational lecture notes and targeted revision in this area.",
+                "severity": "warning"
+            })
+        elif weak_topics:
+            w_top = weak_topics[0]
+            intelligent_insights.append({
+                "category": "attention",
+                "title": f"Topic Review Needed: {w_top['topic_name']}",
+                "message": f"Accuracy in {w_top['topic_name']} is {w_top['accuracy_percentage']}%. We recommend spaced review tasks before your next assessment.",
+                "severity": "warning"
+            })
+        else:
+            intelligent_insights.append({
+                "category": "attention",
+                "title": "Syllabus Balance",
+                "message": "All current topics meet target accuracy thresholds (>=75%). Continue expanding coverage across remaining subject modules.",
+                "severity": "info"
+            })
+
+        # 2. Improvement
+        if len(attempts_with_quiz) >= 2:
+            half = len(attempts_with_quiz) // 2
+            first_half = [att.percentage for att, _, _, _ in attempts_with_quiz[:half]]
+            second_half = [att.percentage for att, _, _, _ in attempts_with_quiz[half:]]
+            avg_first = sum(first_half) / len(first_half)
+            avg_second = sum(second_half) / len(second_half)
+            diff = round(avg_second - avg_first, 1)
+            if diff > 0:
+                intelligent_insights.append({
+                    "category": "improvement",
+                    "title": f"Score Trajectory Rising (+{diff}%)",
+                    "message": f"Your recent assessment scores ({round(avg_second, 1)}%) show a +{diff}% gain over earlier attempts ({round(avg_first, 1)}%). Keep the momentum!",
+                    "severity": "success"
+                })
+            else:
+                intelligent_insights.append({
+                    "category": "improvement",
+                    "title": "Consistent Assessment Pacing",
+                    "message": f"Recent assessment scores are stabilizing at an average of {round(avg_second, 1)}%. Target incremental gains with deeper smart note reviews.",
+                    "severity": "info"
+                })
+        else:
+            intelligent_insights.append({
+                "category": "improvement",
+                "title": "Progress Baseline Established",
+                "message": f"Baseline quiz accuracy established at {avg_score}%. Complete additional assessments to track your growth trajectory.",
+                "severity": "info"
+            })
+
+        # 3. Difficulty
+        difficult_topics = [tp for tp, _, _ in tp_records if tp.total_attempts >= 2 and tp.accuracy_percentage < 65.0]
+        if difficult_topics:
+            d_tp = difficult_topics[0]
+            d_name = next((t_name for tp, t_name, _ in tp_records if tp.id == d_tp.id), "Core Topic")
+            intelligent_insights.append({
+                "category": "difficulty",
+                "title": f"Persistent Difficulty: {d_name}",
+                "message": f"Over {d_tp.total_attempts} attempts, accuracy has averaged {round(d_tp.accuracy_percentage, 1)}%. Breaking down subtopics and generating point-wise notes will help resolve conceptual bottlenecks.",
+                "severity": "warning"
+            })
+        elif weak_topics:
+            intelligent_insights.append({
+                "category": "difficulty",
+                "title": "Subtopic Precision",
+                "message": f"Occasional errors detected in {weak_topics[0]['topic_name']}. Review explanation cards in the quiz review tab to strengthen retention.",
+                "severity": "info"
+            })
+        else:
+            intelligent_insights.append({
+                "category": "difficulty",
+                "title": "Zero Persistent Obstacles",
+                "message": "No recurring conceptual stumbling blocks found in your evaluated answer history. Excellent mastery across active topics!",
+                "severity": "success"
+            })
+
+        # 4. Revision
+        if weak_topics:
+            w_top = weak_topics[0]
+            intelligent_insights.append({
+                "category": "revision",
+                "title": f"Priority Revision: {w_top['topic_name']}",
+                "message": f"Identified as priority revision topic ({w_top['accuracy_percentage']}% accuracy). Adaptive spaced review recommended.",
+                "severity": "warning"
+            })
+        else:
+            intelligent_insights.append({
+                "category": "revision",
+                "title": "Knowledge Retention Maintained",
+                "message": "All practiced topics demonstrate high retention. Retake a mixed-difficulty quiz periodically to prevent memory decay.",
+                "severity": "success"
+            })
+
+        # Personalized practical recommendation based on real activity
+        top_subject = max(subject_performances, key=lambda x: x["average_accuracy"], default=None) if subject_performances else None
+        weakest_tp = min(weak_topics, key=lambda x: x["accuracy_percentage"], default=None) if weak_topics else None
+
+        if top_subject and weakest_tp and top_subject["average_accuracy"] >= 70.0:
+            personalized_rec = (
+                f"You are performing well in {top_subject['subject_name']} ({top_subject['average_accuracy']}% accuracy), "
+                f"but your accuracy in {weakest_tp['topic_name']} ({weakest_tp['accuracy_percentage']}%) needs improvement. "
+                f"Consider reviewing the smart notes for {weakest_tp['topic_name']} and attempting a targeted revision quiz."
+            )
+        elif top_subject and not weakest_tp and total_quizzes > 0:
+            personalized_rec = (
+                f"Outstanding work across your active modules! Your highest performing subject is {top_subject['subject_name']} "
+                f"({top_subject['average_accuracy']}% accuracy). Challenge yourself by generating advanced difficulty quizzes or exploring emerging topics."
+            )
+        elif weakest_tp:
+            personalized_rec = (
+                f"Your current focus should be {weakest_tp['topic_name']} where accuracy is {weakest_tp['accuracy_percentage']}%. "
+                f"Use the AI Study Assistant to clarify core definitions before taking your next quiz."
+            )
+        else:
+            personalized_rec = (
+                "Welcome to your Learning Analytics Dashboard! Start by uploading your study materials, generating smart notes, "
+                "or taking an AI assessment quiz to unlock personalized insights and performance trends."
+            )
+
         if not revision_recs:
             revision_recs.append("Complete topic quizzes across your enrolled subjects to uncover priority learning areas.")
 
         return {
             "total_quizzes_attempted": total_quizzes,
             "average_quiz_score": avg_score,
+            "highest_quiz_score": highest_score,
             "learning_streak_days": streak_days,
             "total_study_hours": total_study_hours,
+            "study_consistency_percentage": study_consistency,
             "strong_topics": strong_topics,
             "weak_topics": weak_topics,
             "recent_activity": recent_activity,
-            "revision_recommendations": revision_recs
+            "subject_performances": subject_performances,
+            "quiz_score_trends": quiz_score_trends,
+            "topic_completion_stats": topic_completion_stats,
+            "intelligent_insights": intelligent_insights,
+            "revision_recommendations": revision_recs,
+            "personalized_recommendation": personalized_rec
         }
 
     @staticmethod

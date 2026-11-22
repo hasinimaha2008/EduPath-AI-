@@ -173,15 +173,54 @@ export interface ActivityDay {
   questions_solved: number;
 }
 
+export interface SubjectPerformanceItem {
+  subject_id?: string;
+  subject_name: string;
+  quizzes_count: number;
+  topics_practiced: number;
+  average_accuracy: number;
+}
+
+export interface QuizScoreTrendItem {
+  attempt_id: string;
+  quiz_title: string;
+  percentage: number;
+  completed_at: string;
+  score: number;
+  max_score: number;
+}
+
+export interface TopicCompletionStats {
+  total_practiced: number;
+  mastered_count: number;
+  proficient_count: number;
+  developing_count: number;
+  needs_practice_count: number;
+}
+
+export interface IntelligentInsightItem {
+  category: "attention" | "improvement" | "difficulty" | "revision" | string;
+  title: string;
+  message: string;
+  severity: "info" | "warning" | "success" | string;
+}
+
 export interface AnalyticsDashboard {
   total_quizzes_attempted: number;
   average_quiz_score: number;
+  highest_quiz_score?: number;
   learning_streak_days: number;
   total_study_hours: number;
+  study_consistency_percentage?: number;
   strong_topics: TopicPerformance[];
   weak_topics: TopicPerformance[];
   recent_activity: ActivityDay[];
+  subject_performances?: SubjectPerformanceItem[];
+  quiz_score_trends?: QuizScoreTrendItem[];
+  topic_completion_stats?: TopicCompletionStats;
+  intelligent_insights?: IntelligentInsightItem[];
   revision_recommendations: string[];
+  personalized_recommendation?: string;
 }
 
 export interface CareerRole {

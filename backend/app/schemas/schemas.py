@@ -265,15 +265,50 @@ class ActivityDay(BaseModel):
     quiz_count: int
     questions_solved: int
 
+class SubjectPerformanceItem(BaseModel):
+    subject_id: Optional[str] = None
+    subject_name: str
+    quizzes_count: int
+    topics_practiced: int
+    average_accuracy: float
+
+class QuizScoreTrendItem(BaseModel):
+    attempt_id: str
+    quiz_title: str
+    percentage: float
+    completed_at: str
+    score: float
+    max_score: float
+
+class TopicCompletionStats(BaseModel):
+    total_practiced: int
+    mastered_count: int
+    proficient_count: int
+    developing_count: int
+    needs_practice_count: int
+
+class IntelligentInsightItem(BaseModel):
+    category: str  # "attention" | "improvement" | "difficulty" | "revision"
+    title: str
+    message: str
+    severity: str  # "info" | "warning" | "success"
+
 class AnalyticsDashboardResponse(BaseModel):
     total_quizzes_attempted: int
     average_quiz_score: float
+    highest_quiz_score: float = 0.0
     learning_streak_days: int
     total_study_hours: float
+    study_consistency_percentage: float = 0.0
     strong_topics: List[TopicPerformanceResponse]
     weak_topics: List[TopicPerformanceResponse]
     recent_activity: List[ActivityDay]
+    subject_performances: List[SubjectPerformanceItem] = []
+    quiz_score_trends: List[QuizScoreTrendItem] = []
+    topic_completion_stats: Optional[TopicCompletionStats] = None
+    intelligent_insights: List[IntelligentInsightItem] = []
     revision_recommendations: List[str]
+    personalized_recommendation: Optional[str] = None
 
 # --- Career & Skill Schemas ---
 class CareerRoleResponse(BaseModel):

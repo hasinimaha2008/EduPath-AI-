@@ -51,13 +51,13 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS Middleware
+# Centralized Environment-Based CORS Configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows Next.js frontend on any port/preview
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"],
 )
 
 # Exception handler for unhandled errors
@@ -105,6 +105,7 @@ from app.core.database import AsyncSessionLocal
 import os
 
 @app.get("/health")
+@app.get("/api/health")
 async def health_check():
     """
     Production health check probing database connectivity and upload storage write permissions.

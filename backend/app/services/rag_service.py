@@ -13,6 +13,7 @@ Features:
 import json
 import math
 import re
+import time
 import logging
 from typing import List, Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -97,17 +98,53 @@ class RAGService:
     @staticmethod
     async def index_chunks(session: AsyncSession, chunks: List[DocumentChunk]):
         """
-        Generates and saves embeddings for document chunks.
+        Generates and saves embeddings for document chunks with versioned metadata.
         """
+        metadata = gemini_service.embeddings.get_metadata()
         for chunk in chunks:
-            embedding = gemini_service.generate_embedding(chunk.content)
+            embedding = gemini_service.embeddings.embed_document(chunk.content)
             doc_embedding = DocumentEmbedding(
                 chunk_id=chunk.id,
                 embedding_json=json.dumps(embedding),
-                model_name="gemini-embedding-001"
+                model_name=metadata["model_name"]
             )
             session.add(doc_embedding)
         await session.commit()
+
+    @staticmethod
+    async def reindex_user_documents(session: AsyncSession, user_id: str) -> Dict[str, Any]:
+        """
+        Re-indexes all document chunks belonging to user using active embedding model.
+        Supports seamless embedding model upgrades and metadata versioning.
+        """
+        metadata = gemini_service.embeddings.get_metadata()
+        stmt = (
+            select(DocumentChunk)
+            .join(Document, DocumentChunk.document_id == Document.id)
+            .where(Document.user_id == user_id)
+        )
+        res = await session.execute(stmt)
+        chunks = res.scalars().all()
+        reindexed_count = 0
+        for chunk in chunks:
+            emb = gemini_service.embeddings.embed_document(chunk.content)
+            emb_stmt = select(DocumentEmbedding).where(DocumentEmbedding.chunk_id == chunk.id)
+            emb_obj = (await session.execute(emb_stmt)).scalar_one_or_none()
+            if emb_obj:
+                emb_obj.embedding_json = json.dumps(emb)
+                emb_obj.model_name = metadata["model_name"]
+            else:
+                session.add(DocumentEmbedding(
+                    chunk_id=chunk.id,
+                    embedding_json=json.dumps(emb),
+                    model_name=metadata["model_name"]
+                ))
+            reindexed_count += 1
+        await session.commit()
+        return {
+            "reindexed_chunks": reindexed_count,
+            "embedding_metadata": metadata
+        }
 
     @staticmethod
     async def retrieve_relevant_chunks(
@@ -126,7 +163,7 @@ class RAGService:
         Enforces user ownership, security boundaries, and citation relevance thresholds.
         Supports cross-document querying when document_id is None.
         """
-        query_vector = gemini_service.generate_embedding(query)
+        query_vector = gemini_service.embeddings.embed_query(query)
 
         # Build query for user documents
         stmt = select(
@@ -293,7 +330,14 @@ Return ONLY valid JSON.
     ) -> List[Dict[str, str]]:
         """
         Extracts key technical concepts, terms, and definitions from document notes.
+        Strictly enforces user-level document ownership.
         """
+        doc_stmt = select(Document).where(Document.id == document_id, Document.user_id == user_id)
+        doc_res = await session.execute(doc_stmt)
+        doc = doc_res.scalar_one_or_none()
+        if not doc:
+            raise ValueError("Document not found or access denied.")
+
         chunks_stmt = select(DocumentChunk).where(
             DocumentChunk.document_id == document_id
         ).order_by(DocumentChunk.chunk_index.asc()).limit(6)
@@ -359,7 +403,14 @@ Return ONLY a JSON array of objects with schema:
     ) -> List[Dict[str, Any]]:
         """
         Generates self-assessment questions grounded strictly in the uploaded document.
+        Strictly enforces user-level document ownership.
         """
+        doc_stmt = select(Document).where(Document.id == document_id, Document.user_id == user_id)
+        doc_res = await session.execute(doc_stmt)
+        doc = doc_res.scalar_one_or_none()
+        if not doc:
+            raise ValueError("Document not found or access denied.")
+
         chunks_stmt = select(DocumentChunk).where(
             DocumentChunk.document_id == document_id
         ).order_by(DocumentChunk.chunk_index.asc()).limit(8)
@@ -382,11 +433,13 @@ Return ONLY a JSON array of objects with schema:
         test_queries: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
         """
-        Retrieval evaluation benchmark computing Precision@K, Hit@K, and Mean Reciprocal Rank (MRR).
+        Retrieval evaluation benchmark computing Precision@K, Hit@K, MRR, nDCG@3, and Latency.
         Evaluates both specific keyword containment and document topical relevance.
         """
         results = []
         reciprocal_ranks = []
+        ndcg_scores = []
+        latencies_ms = []
         hits_at_1 = 0
         hits_at_3 = 0
 
@@ -395,12 +448,15 @@ Return ONLY a JSON array of objects with schema:
             target_keywords = item.get("expected_keywords", [])
             target_domain = item.get("domain", "").lower()
 
+            t0 = time.perf_counter()
             retrieved = await RAGService.retrieve_relevant_chunks(
                 session=session,
                 user_id=user_id,
                 query=query,
                 top_k=3
             )
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            latencies_ms.append(elapsed_ms)
 
             domain_aliases = {
                 "dbms": ["dbms", "database"],
@@ -411,12 +467,14 @@ Return ONLY a JSON array of objects with schema:
                 "cloud": ["cloud computing", "containers", "cloud"],
                 "distributed systems": ["distributed", "distributed architectures", "distributed systems"],
                 "security": ["cybersecurity", "security", "cryptography"],
-                "system design": ["software architecture", "system design", "patterns"]
+                "system design": ["software architecture", "system design", "patterns"],
+                "compilers": ["compiler", "compilers", "programming language", "grammar", "parsing", "automata", "ast"]
             }
             aliases = domain_aliases.get(target_domain, [target_domain]) if target_domain else []
 
             hits = 0
             rr = 0.0
+            dcg = 0.0
             for rank, r in enumerate(retrieved, start=1):
                 content_lower = r["content"].lower()
                 doc_title_lower = r.get("doc_title", "").lower()
@@ -426,8 +484,14 @@ Return ONLY a JSON array of objects with schema:
                 )
                 if matches:
                     hits += 1
+                    dcg += 1.0 / math.log2(rank + 1)
                     if rr == 0.0:
                         rr = 1.0 / rank
+
+            # Ideal DCG for binary relevance: if at least 1 hit, ideal is 1.0 / log2(2) = 1.0
+            idcg = 1.0 if hits > 0 else 1.0
+            query_ndcg = (dcg / idcg) if hits > 0 else 0.0
+            ndcg_scores.append(min(query_ndcg, 1.0))
 
             if rr == 1.0:
                 hits_at_1 += 1
@@ -438,14 +502,19 @@ Return ONLY a JSON array of objects with schema:
             reciprocal_ranks.append(rr)
             results.append({
                 "query": query,
+                "domain": target_domain,
                 "retrieved_count": len(retrieved),
                 "hits": hits,
                 "precision_at_3": round(prec, 2),
-                "reciprocal_rank": round(rr, 2)
+                "reciprocal_rank": round(rr, 2),
+                "ndcg_at_3": round(min(query_ndcg, 1.0), 3),
+                "latency_ms": round(elapsed_ms, 2)
             })
 
         avg_precision = sum(r["precision_at_3"] for r in results) / len(results) if results else 0.0
         mrr = sum(reciprocal_ranks) / len(reciprocal_ranks) if reciprocal_ranks else 0.0
+        mean_ndcg = sum(ndcg_scores) / len(ndcg_scores) if ndcg_scores else 0.0
+        avg_latency = sum(latencies_ms) / len(latencies_ms) if latencies_ms else 0.0
         n_queries = len(test_queries) if test_queries else 1
 
         return {
@@ -454,6 +523,8 @@ Return ONLY a JSON array of objects with schema:
             "mean_reciprocal_rank_mrr": round(mrr, 3),
             "hit_at_1_rate": round(hits_at_1 / n_queries, 3),
             "hit_at_3_rate": round(hits_at_3 / n_queries, 3),
+            "mean_ndcg_at_3": round(mean_ndcg, 3),
+            "average_latency_ms": round(avg_latency, 2),
             "benchmark_details": results
         }
 

@@ -376,5 +376,49 @@ RAG_BENCHMARK_50_QUESTIONS = [
         "query": "How does database sharding partition data across horizontal clusters using consistent hashing?",
         "expected_keywords": ["sharding", "partition", "horizontal", "consistent hashing", "cluster", "shard key"],
         "min_relevance_threshold": 0.6
+    },
+
+    # --- 9. Compiler Design & Programming Language Theory ---
+    {
+        "id": "RAG-Q51",
+        "domain": "Compilers",
+        "query": "How do deterministic finite automata (DFA) and lexical analyzers tokenize source code into lexemes?",
+        "expected_keywords": ["dfa", "finite automata", "lexical analysis", "tokens", "lexemes", "regex", "scanner"],
+        "min_relevance_threshold": 0.6
+    },
+    {
+        "id": "RAG-Q52",
+        "domain": "Compilers",
+        "query": "Explain the difference between LL(1) recursive descent and LR(1)/LALR bottom-up shift-reduce parsing.",
+        "expected_keywords": ["ll(1)", "lr(1)", "lalr", "shift-reduce", "recursive descent", "parsing", "grammar", "lookahead"],
+        "min_relevance_threshold": 0.6
+    },
+    {
+        "id": "RAG-Q53",
+        "domain": "Compilers",
+        "query": "What is an Abstract Syntax Tree (AST) and how does Static Single Assignment (SSA) form facilitate compiler optimizations?",
+        "expected_keywords": ["ast", "abstract syntax tree", "ssa", "static single assignment", "phi node", "intermediate representation", "ir"],
+        "min_relevance_threshold": 0.6
+    },
+    {
+        "id": "RAG-Q54",
+        "domain": "Compilers",
+        "query": "How do static type systems implement Hindley-Milner type inference to guarantee type safety without type annotations?",
+        "expected_keywords": ["hindley-milner", "type inference", "unification", "type system", "type safety", "polymorphism"],
+        "min_relevance_threshold": 0.6
+    },
+    {
+        "id": "RAG-Q55",
+        "domain": "Compilers",
+        "query": "Describe common compiler intermediate optimization passes including constant folding, dead code elimination, and loop unrolling.",
+        "expected_keywords": ["constant folding", "dead code elimination", "loop unrolling", "optimization", "passes", "dataflow"],
+        "min_relevance_threshold": 0.6
+    },
+    {
+        "id": "RAG-Q56",
+        "domain": "Compilers",
+        "query": "How do tracing garbage collectors (mark-and-sweep) compare with generational garbage collection in memory management runtimes?",
+        "expected_keywords": ["garbage collection", "mark-and-sweep", "generational", "eden", "tenured", "tracing", "stop-the-world"],
+        "min_relevance_threshold": 0.6
     }
 ]

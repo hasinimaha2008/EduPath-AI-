@@ -5,6 +5,7 @@ import logging
 from typing import List, Optional
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.config import settings
@@ -200,7 +201,7 @@ async def delete_document(
     res = await session.execute(stmt)
     doc = res.scalar_one_or_none()
     if not doc:
-        raise HTTPException(status_code=404, detail="Document not found.")
+        raise HTTPException(status_code=404, detail="Document not found or access denied.")
 
     if os.path.exists(doc.file_path):
         try:
@@ -211,6 +212,34 @@ async def delete_document(
     await session.delete(doc)
     await session.commit()
     return {"message": "Document successfully deleted."}
+
+@router.get("/{document_id}/download")
+async def download_document(
+    document_id: str,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db)
+):
+    """
+    Secure document download and export enforcing authenticated user ownership
+    and path traversal prevention.
+    """
+    stmt = select(Document).where(Document.id == document_id, Document.user_id == current_user.id)
+    res = await session.execute(stmt)
+    doc = res.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found or access denied.")
+
+    # Prevent directory traversal attacks
+    real_upload_dir = os.path.realpath(settings.UPLOAD_DIR)
+    real_file_path = os.path.realpath(doc.file_path)
+    if not real_file_path.startswith(real_upload_dir) or not os.path.exists(real_file_path):
+        raise HTTPException(status_code=404, detail="Requested file does not exist on disk.")
+
+    return FileResponse(
+        path=real_file_path,
+        filename=doc.file_name,
+        media_type="application/octet-stream"
+    )
 
 @router.get("/{document_id}/summary")
 async def get_document_summary(
@@ -235,7 +264,10 @@ async def get_document_concepts(
     """
     Extracts key technical concepts and definitions from document notes (Upgrade 4).
     """
-    return await rag_service.extract_concepts(session, current_user.id, document_id)
+    try:
+        return await rag_service.extract_concepts(session, current_user.id, document_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 @router.post("/{document_id}/generate-questions")
 async def generate_document_questions(
@@ -247,7 +279,10 @@ async def generate_document_questions(
     """
     Generates self-assessment questions grounded directly in the uploaded document (Upgrade 4).
     """
-    return await rag_service.generate_key_questions(session, current_user.id, document_id, count=count)
+    try:
+        return await rag_service.generate_key_questions(session, current_user.id, document_id, count=count)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 @router.post("/evaluate-retrieval")
 async def evaluate_retrieval_benchmark(

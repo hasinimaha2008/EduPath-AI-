@@ -10,11 +10,12 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - ENVIRONMENT=production
-      - PORT=8000
-      - DATABASE_URL=sqlite+aiosqlite:////app/edupath.db
-      - JWT_SECRET=edupath-production-docker-secret-key-32-chars-long-9a8b
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - PORT=${PORT:-8000}
+      - DATABASE_URL=${DATABASE_URL:-sqlite+aiosqlite:////app/edupath.db}
+      - JWT_SECRET=${JWT_SECRET:?Mandatory JWT_SECRET environment variable is missing for production deployment}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       - UPLOAD_DIR=/app/uploads
     volumes:
       - backend-uploads:/app/uploads

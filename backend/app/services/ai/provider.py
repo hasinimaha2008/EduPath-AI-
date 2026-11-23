@@ -103,4 +103,34 @@ class LLMProvider:
 
         return None
 
+    async def generate_stream(
+        self,
+        prompt: str,
+        generation_config: Optional[Dict[str, Any]] = None
+    ):
+        """
+        Genuine provider token streaming. Yields token chunks in real-time
+        as they arrive from Gemini's streaming interface.
+        """
+        if not self.is_configured or not self.chat_model:
+            return
+
+        try:
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: self.chat_model.generate_content(
+                    prompt,
+                    generation_config=generation_config,
+                    stream=True
+                )
+            )
+            for chunk in response:
+                if chunk and hasattr(chunk, "text") and chunk.text:
+                    yield chunk.text
+                    await asyncio.sleep(0.005)
+        except Exception as e:
+            logger.error(f"Gemini streaming provider error: {e}")
+            raise
+
 llm_provider = LLMProvider()

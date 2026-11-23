@@ -77,34 +77,44 @@ class AssistantService:
         citations: Optional[List[Dict[str, Any]]] = None
     ) -> AsyncGenerator[str, None]:
         """
-        Token-by-token streaming generator via Server-Sent Events (SSE).
+        Genuine token-by-token streaming generator.
+        Streams live tokens directly from the LLM provider as they are generated.
         """
-        full_res = await self.ask_sync(
+        prompt = self._build_prompt(
             question=question,
             context=context,
             conversation_history=conversation_history,
             explanation_level=explanation_level,
+            language=language
+        )
+
+        streamed_any = False
+        if llm_provider.is_configured:
+            try:
+                async for chunk in llm_provider.generate_stream(
+                    prompt=prompt,
+                    generation_config={"temperature": 0.4, "max_output_tokens": 2048}
+                ):
+                    streamed_any = True
+                    yield chunk
+                if streamed_any:
+                    return
+            except Exception as e:
+                logger.warning(f"Live LLM stream error: {e}. Falling back to internal engine.")
+
+        # Deterministic Grounded Fallback when provider unconfigured or disconnected
+        fallback_answer = self._generate_deterministic_answer(
+            question=question,
+            context=context,
+            explanation_level=explanation_level,
             language=language,
             citations=citations
         )
-        answer_text = full_res["answer"]
-
-        # Stream out words with realistic low latency
-        words = answer_text.split(" ")
-        for i, word in enumerate(words):
-            chunk = word + (" " if i < len(words) - 1 else "")
-            payload = json.dumps({"token": chunk})
-            yield f"data: {payload}\n\n"
-            await asyncio.sleep(0.015)
-
-        # Final event emitting citations
-        done_payload = json.dumps({
-            "done": True,
-            "citations": citations or [],
-            "explanation_level": explanation_level,
-            "language": language
-        })
-        yield f"data: {done_payload}\n\n"
+        import re
+        tokens = re.findall(r'\S+|\s+', fallback_answer)
+        for t in tokens:
+            yield t
+            await asyncio.sleep(0.01)
 
     def _build_prompt(
         self,

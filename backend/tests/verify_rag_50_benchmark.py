@@ -189,10 +189,11 @@ async def run_rag_benchmark():
 
         # 4. Execute 50-Question Retrieval Benchmark
         print(f"[4/4] Executing 50-Question Retrieval Evaluation Benchmark...")
+        queries_50 = RAG_BENCHMARK_50_QUESTIONS[:50]
         evaluation = await rag_service.evaluate_retrieval(
             session=session,
             user_id=test_user.id,
-            test_queries=RAG_BENCHMARK_50_QUESTIONS
+            test_queries=queries_50
         )
 
         avg_precision = evaluation["average_precision_at_3"]
@@ -204,7 +205,7 @@ async def run_rag_benchmark():
         print("-" * 80)
 
         domain_stats = {}
-        for q, res in zip(RAG_BENCHMARK_50_QUESTIONS, details):
+        for q, res in zip(queries_50, details):
             d = q["domain"]
             domain_stats.setdefault(d, {"total": 0, "prec_sum": 0.0, "mrr_sum": 0.0, "perfect_hits": 0})
             domain_stats[d]["total"] += 1

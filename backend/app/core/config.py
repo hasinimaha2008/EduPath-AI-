@@ -1,7 +1,7 @@
 import os
 import secrets
 import logging
-from typing import List
+from typing import List, Any
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -41,6 +41,7 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:8000",
+        "http://127.0.0.1:8000",
     ]
     
     # Uploads
@@ -51,6 +52,15 @@ class Settings(BaseSettings):
         env_file=os.path.join(BACKEND_DIR, ".env"),
         extra="ignore"
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def parse_cors_origins(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            raw = data.get("ALLOWED_ORIGINS") or os.getenv("ALLOWED_ORIGINS")
+            if raw and isinstance(raw, str):
+                data["CORS_ORIGINS"] = [x.strip() for x in raw.split(",") if x.strip()]
+        return data
 
     @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":

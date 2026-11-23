@@ -1,21 +1,68 @@
 import os
 import re
+import zipfile
 from typing import List, Dict, Any, Tuple
 import fitz  # PyMuPDF
 import docx
 from pptx import Presentation
 
+MAX_UNCOMPRESSED_ARCHIVE_BYTES = 50 * 1024 * 1024  # 50 MB
+MAX_COMPRESSION_RATIO = 50.0  # 50:1
+MAX_PDF_PAGES = 500
+MAX_EXTRACTED_CHARACTERS = 5_000_000
+
+def check_zip_bomb(file_input: Any) -> None:
+    """
+    Validates zip containers (DOCX, PPTX) against decompression bomb vulnerabilities.
+    Accepts either a filesystem path (str) or raw bytes / stream.
+    """
+    try:
+        if isinstance(file_input, str):
+            compressed_size = os.path.getsize(file_input)
+            zf = zipfile.ZipFile(file_input, "r")
+        elif isinstance(file_input, (bytes, bytearray)):
+            import io
+            compressed_size = len(file_input)
+            zf = zipfile.ZipFile(io.BytesIO(file_input), "r")
+        else:
+            compressed_size = 0
+            zf = zipfile.ZipFile(file_input, "r")
+
+        with zf:
+            total_uncompressed = sum(info.file_size for info in zf.infolist())
+            if total_uncompressed > MAX_UNCOMPRESSED_ARCHIVE_BYTES:
+                raise ValueError(
+                    f"Decompression bomb protection: uncompressed archive size ({total_uncompressed} bytes) "
+                    f"exceeds safe limit of {MAX_UNCOMPRESSED_ARCHIVE_BYTES // (1024*1024)}MB."
+                )
+            if compressed_size > 0:
+                ratio = total_uncompressed / compressed_size
+                if ratio > MAX_COMPRESSION_RATIO and total_uncompressed > 1 * 1024 * 1024:
+                    raise ValueError(
+                        f"Decompression bomb protection: archive compression ratio ({ratio:.1f}:1) "
+                        f"exceeds safe threshold of {MAX_COMPRESSION_RATIO}:1."
+                    )
+    except zipfile.BadZipFile:
+        raise ValueError("File is corrupted or not a valid zip archive container.")
+
 class DocumentParserService:
     CHUNK_SIZE = 750  # characters per chunk approximate
     CHUNK_OVERLAP = 120
 
-    @staticmethod
-    def extract_text_from_pdf(file_path: str) -> List[Dict[str, Any]]:
+    check_zip_bomb = staticmethod(check_zip_bomb)
+
+    @classmethod
+    def extract_text_from_pdf(cls, file_path: str) -> List[Dict[str, Any]]:
         """
         Extracts text from PDF, returning a list of dicts with page_number and text.
+        Guarded against excessive page-count denial-of-service.
         """
         pages = []
         doc = fitz.open(file_path)
+        if len(doc) > MAX_PDF_PAGES:
+            doc.close()
+            raise ValueError(f"PDF page count ({len(doc)}) exceeds maximum threshold of {MAX_PDF_PAGES} pages.")
+
         for page_idx in range(len(doc)):
             page = doc[page_idx]
             text = page.get_text("text")
@@ -27,11 +74,13 @@ class DocumentParserService:
         doc.close()
         return pages
 
-    @staticmethod
-    def extract_text_from_docx(file_path: str) -> List[Dict[str, Any]]:
+    @classmethod
+    def extract_text_from_docx(cls, file_path: str) -> List[Dict[str, Any]]:
         """
         Extracts text from DOCX, grouping paragraphs by page estimates.
+        Protected against zip bomb expansion.
         """
+        cls.check_zip_bomb(file_path)
         doc = docx.Document(file_path)
         paragraphs = [p.text.strip() for p in doc.paragraphs if p.text and p.text.strip()]
         
@@ -86,13 +135,14 @@ class DocumentParserService:
 
         return pages
 
-    @staticmethod
-    def extract_text_from_pptx(file_path: str) -> List[Dict[str, Any]]:
+    @classmethod
+    def extract_text_from_pptx(cls, file_path: str) -> List[Dict[str, Any]]:
         """
         Extracts structured text from PowerPoint (.pptx) presentations,
         mapping each slide to a page_number and preserving slide titles,
-        body content, tables, and speaker notes.
+        body content, tables, and speaker notes. Protected against zip bombs.
         """
+        cls.check_zip_bomb(file_path)
         pages = []
         try:
             prs = Presentation(file_path)

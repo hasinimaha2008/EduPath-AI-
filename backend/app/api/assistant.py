@@ -3,7 +3,7 @@ import logging
 from typing import Optional, List
 from datetime import datetime
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -63,6 +63,14 @@ async def ask_study_assistant(
     question = req.question.strip()
     if not question:
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
+
+    # Validate document ownership if attached
+    if req.document_id:
+        doc_chk = await session.execute(
+            select(Document).where(Document.id == req.document_id, Document.user_id == current_user.id)
+        )
+        if not doc_chk.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="Document not found or access denied.")
 
     # 1. Resolve or create conversation with smart title
     conv = None
@@ -177,6 +185,7 @@ async def ask_study_assistant(
 
 @router.post("/chat-stream")
 async def chat_stream_assistant(
+    request: Request,
     req: AssistantAskRequest,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db)
@@ -188,6 +197,14 @@ async def chat_stream_assistant(
     question = req.question.strip()
     if not question:
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
+
+    # Validate document ownership if attached
+    if req.document_id:
+        doc_chk = await session.execute(
+            select(Document).where(Document.id == req.document_id, Document.user_id == current_user.id)
+        )
+        if not doc_chk.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="Document not found or access denied.")
 
     # 1. Resolve or create conversation
     conv = None
@@ -261,6 +278,7 @@ async def chat_stream_assistant(
         yield f"data: {json.dumps({'type': 'meta', 'conversation_id': conv_id, 'title': conv_title, 'user_message': {'id': user_msg_id, 'conversation_id': conv_id, 'sender_role': 'user', 'content': question, 'created_at': user_created}, 'citations': citations_data})}\n\n"
 
         full_answer = ""
+        stream_failed = False
         try:
             async for token in gemini_service.stream_chat_response(
                 question=question,
@@ -269,12 +287,17 @@ async def chat_stream_assistant(
                 language=req.language or "auto",
                 explanation_level=req.explanation_level or "intermediate"
             ):
+                if await request.is_disconnected():
+                    logger.info("Client disconnected from chat stream.")
+                    break
                 full_answer += token
                 yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
         except Exception as stream_err:
             logger.error(f"Error during stream generation: {stream_err}")
+            stream_failed = True
+            yield f"data: {json.dumps({'type': 'error', 'message': str(stream_err)})}\n\n"
             if not full_answer:
-                full_answer = "I encountered an error while formulating the response. Please try asking again."
+                full_answer = "I encountered an error formulating the response. Please try asking again."
                 yield f"data: {json.dumps({'type': 'token', 'content': full_answer})}\n\n"
 
         # Persist assistant message safely with a fresh DB session

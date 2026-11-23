@@ -127,38 +127,15 @@ class GeminiService:
                 })
             context = (context or "") + "\n" + chunk_text
 
-        # First try LLM streaming if configured
-        if self.is_configured and self.provider.chat_model:
-            prompt = self.assistant._build_prompt(
-                question=question,
-                context=context,
-                conversation_history=conversation_history,
-                explanation_level=explanation_level or "intermediate",
-                language=language or "auto"
-            )
-            try:
-                response = self.provider.chat_model.generate_content(prompt, stream=True)
-                for chunk in response:
-                    if chunk.text:
-                        yield chunk.text
-                return
-            except Exception as e:
-                logger.error(f"Gemini streaming error: {e}. Falling back to dynamic tokenized generator.")
-
-        # Fallback: tokenized streaming from dynamic assistant
-        res = await self.assistant.ask_sync(
+        async for chunk in self.assistant.ask_stream(
             question=question,
             context=context,
             conversation_history=conversation_history,
             explanation_level=explanation_level or "intermediate",
             language=language or "auto",
             citations=parsed_citations
-        )
-        answer_text = res["answer"]
-        tokens = re.findall(r'\S+|\s+', answer_text)
-        for t in tokens:
-            yield t
-            await asyncio.sleep(0.01)
+        ):
+            yield chunk
 
     async def generate_notes(
         self,

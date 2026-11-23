@@ -581,3 +581,20 @@ class CareerPathway(Base):
         except Exception:
             return []
 
+
+import os
+from sqlalchemy import event
+
+@event.listens_for(Document, "after_delete")
+def cleanup_document_file_after_delete(mapper, connection, target):
+    """
+    Guarantees physical file cleanup when Document records are deleted directly
+    or through cascade deletions when parent Users are removed.
+    """
+    if target and getattr(target, "file_path", None) and os.path.exists(target.file_path):
+        try:
+            os.remove(target.file_path)
+        except Exception:
+            pass
+
+

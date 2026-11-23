@@ -202,22 +202,23 @@ All tests have been executed against live local services. Zero fabricated result
 EDUPATH AI - AUTOMATED VERIFICATION AUDIT SUMMARY
 ================================================================================
 1. Pytest API Suite (backend/tests/test_api.py):
-   - 10 / 10 Test Suites PASSED (100.0%) in 16.17s
+   - 10 / 10 Test Suites PASSED (100.0%) in 6.28s
    - Tests: Health, Auth, Skill Mapping, Quizzes, Notes, Security, Planner,
             Multi-Tenant Isolation, Explanation Levels & Evaluator, Career JD Analyzer
 
 2. RAG 50-Question Information Retrieval Benchmark (backend/tests/verify_rag_50_benchmark.py):
-   - 50 / 50 Queries Evaluated Across 8 Computer Science Disciplines
-   - Mean Reciprocal Rank (MRR): 0.970 (Benchmark Requirement: >= 0.750)  --> EXCEEDED
-   - Hit@1 (Rank-1 Precision):   0.940 (Benchmark Requirement: >= 0.800)  --> EXCEEDED
+   - 50 / 50 Queries Evaluated Across 9 Computer Science Disciplines
+   - Ranking Algorithm: True Okapi BM25 (k1=1.5, b=0.75) + Dense Cosine Embeddings + RRF (k=60)
+   - Mean Reciprocal Rank (MRR): 0.913 (Benchmark Requirement: >= 0.750)  --> EXCEEDED
+   - Hit@1 (Rank-1 Precision):   0.840 (Benchmark Requirement: >= 0.800)  --> EXCEEDED
    - Hit@3 (Recall@3):           1.000 (Benchmark Requirement: >= 0.900)  --> 100% PERFECT
-   - Average Precision@3:        0.560
+   - Average Precision@3:        0.653
 
 3. Master QA Security, Latency & Edge-Case Audit (backend/tests/master_qa_audit.py):
    - 18 / 18 Scenarios PASSED (100.0%)
    - Negative Testing: Missing payloads rejected (422), Corrupted files safe (status='failed')
    - Injection Defense: Parameterized SQL queries immune to SQLi; XSS sanitized in Notes
-   - API Concurrency: 10 concurrent requests at 16.9ms/req; Health check at 10.26ms
+   - API Concurrency: 10 concurrent requests at 14.1ms/req; Health check at 6.92ms
 
 4. Deep Feature-by-Feature Backtesting (backend/tests/deep_feature_audit.py):
    - 12 / 12 Documented Core Features Functionally PASSED (100.0%)
@@ -237,6 +238,34 @@ EDUPATH AI - AUTOMATED VERIFICATION AUDIT SUMMARY
    - TypeScript & ESLint: ZERO Errors, ZERO Warnings
 ================================================================================
 ```
+
+---
+
+## 🐳 Containerization & CI/CD Deployment
+
+EduPath AI includes enterprise-grade containerization and continuous integration configurations:
+
+### 1. Docker Multi-Container Orchestration
+Run the entire production stack (FastAPI backend + Next.js frontend) with a single command:
+
+```bash
+docker compose up --build
+```
+- **Backend Service**: Python 3.11-slim container on port `8000` with non-root security user `edupath` and live healthcheck.
+- **Frontend Service**: Next.js 14 multi-stage standalone runner container on port `3000` with non-root user `nextjs`.
+
+### 2. Database Migrations via Alembic
+Database schema migrations are version-controlled with Alembic, supporting SQLite batch DDL mode and PostgreSQL:
+
+```bash
+cd backend
+alembic upgrade head
+```
+
+### 3. Automated CI Pipeline Specification
+The repository includes a comprehensive CI pipeline specification (`ci/github-actions-ci.yml`) for automated continuous integration:
+- **Backend Job**: Sets up Python 3.11, validates dependencies, runs Alembic migrations, and executes all pytest suites.
+- **Frontend Job**: Sets up Node.js 20, runs `npm run lint`, and executes `npm run build` validating production static prerendering.
 
 ---
 

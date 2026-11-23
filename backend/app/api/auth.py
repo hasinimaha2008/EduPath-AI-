@@ -2,16 +2,27 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.database import get_db
-from app.core.security import verify_password, get_password_hash, create_access_token
+from app.core.security import (
+    verify_password, get_password_hash, create_access_token,
+    validate_password_strength, check_auth_rate_limit
+)
 from app.models.models import User
 from app.schemas.schemas import UserCreate, UserLogin, UserResponse, TokenResponse
 from app.api.deps import get_current_user
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
-@router.post("/register", response_model=TokenResponse)
+@router.post("/register", response_model=TokenResponse, dependencies=[Depends(check_auth_rate_limit)])
 async def register_user(user_in: UserCreate, session: AsyncSession = Depends(get_db)):
-    # Check if user already exists
+    # 1. Enforce password policy
+    is_valid, msg = validate_password_strength(user_in.password)
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=msg
+        )
+
+    # 2. Check if user already exists
     stmt = select(User).where(User.email == user_in.email)
     res = await session.execute(stmt)
     if res.scalar_one_or_none():
@@ -36,7 +47,7 @@ async def register_user(user_in: UserCreate, session: AsyncSession = Depends(get
         user=UserResponse.model_validate(user)
     )
 
-@router.post("/login", response_model=TokenResponse)
+@router.post("/login", response_model=TokenResponse, dependencies=[Depends(check_auth_rate_limit)])
 async def login_user(login_data: UserLogin, session: AsyncSession = Depends(get_db)):
     stmt = select(User).where(User.email == login_data.email)
     res = await session.execute(stmt)

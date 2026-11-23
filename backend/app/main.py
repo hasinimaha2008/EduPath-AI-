@@ -100,6 +100,37 @@ async def root():
         "docs_url": "/docs"
     }
 
+from sqlalchemy import text
+from app.core.database import AsyncSessionLocal
+import os
+
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "service": "EduPath AI Backend Engine"}
+    """
+    Production health check probing database connectivity and upload storage write permissions.
+    """
+    db_status = "connected"
+    try:
+        async with AsyncSessionLocal() as session:
+            await session.execute(text("SELECT 1"))
+    except Exception as e:
+        logger.error(f"Health check probe failed on database connection: {e}")
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "status": "unhealthy",
+                "service": "EduPath AI Backend Engine",
+                "database": f"error: {str(e)}",
+                "version": settings.VERSION
+            }
+        )
+
+    storage_writable = os.access(settings.UPLOAD_DIR, os.W_OK) if os.path.exists(settings.UPLOAD_DIR) else True
+    return {
+        "status": "healthy",
+        "service": "EduPath AI Backend Engine",
+        "database": db_status,
+        "storage": "writable" if storage_writable else "read-only",
+        "environment": settings.ENVIRONMENT,
+        "version": settings.VERSION
+    }

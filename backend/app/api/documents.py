@@ -1,6 +1,7 @@
 import os
 import shutil
 import uuid
+import logging
 from typing import List, Optional
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status
@@ -13,6 +14,8 @@ from app.models.models import User, Document, DocumentChunk
 from app.schemas.schemas import DocumentResponse
 from app.services.document_parser import DocumentParserService
 from app.services.rag_service import rag_service
+
+logger = logging.getLogger("edupath.documents")
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
@@ -61,6 +64,33 @@ async def upload_document(
                     detail=f"File exceeds maximum allowed size of {settings.MAX_UPLOAD_SIZE_BYTES // (1024*1024)}MB."
                 )
             buffer.write(chunk)
+    # Validate file signature (magic bytes) to prevent extension spoofing
+    def validate_magic_bytes(fpath: str, file_ext: str) -> bool:
+        try:
+            with open(fpath, "rb") as f:
+                header = f.read(512)
+            logger.info(f"Magic bytes check: ext={file_ext}, len={len(header)}, header_start={header[:10]}")
+            if file_ext == ".pdf":
+                return header.startswith(b"%PDF")
+            elif file_ext in (".docx", ".pptx"):
+                return header.startswith(b"PK\x03\x04")
+            elif file_ext == ".txt":
+                if b"\x00" in header:
+                    return False
+                header.decode("utf-8", errors="strict")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"validate_magic_bytes exception: {e}")
+            return False
+
+    if not validate_magic_bytes(saved_path, ext):
+        if os.path.exists(saved_path):
+            os.remove(saved_path)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Security rejection: file content does not match the declared '{ext}' format signature."
+        )
 
     doc_title = title.strip() if title and title.strip() else os.path.splitext(file_name)[0]
 

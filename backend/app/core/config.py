@@ -1,15 +1,23 @@
 import os
-from pydantic_settings import BaseSettings, SettingsConfigDict
+import secrets
+import logging
 from typing import List
+from pydantic import model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger("edupath.config")
 
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEFAULT_DB_FILE = os.path.join(BACKEND_DIR, "edupath.db").replace("\\", "/")
 DEFAULT_UPLOAD_DIR = os.path.join(BACKEND_DIR, "uploads")
 
+DEFAULT_DEV_SECRET = "edupath-super-secret-development-key-30203f-8b5cf6"
+
 class Settings(BaseSettings):
     PROJECT_NAME: str = "EduPath AI – Intelligent Learning & Career Ecosystem"
     VERSION: str = "1.0.0"
     API_V1_PREFIX: str = "/api"
+    ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development").lower()
     
     # Database
     DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite+aiosqlite:///{DEFAULT_DB_FILE}")
@@ -20,9 +28,13 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     
     # Security / JWT
-    JWT_SECRET: str = os.getenv("JWT_SECRET", "edupath-super-secret-development-key-30203f-8b5cf6")
+    JWT_SECRET: str = os.getenv("JWT_SECRET", DEFAULT_DEV_SECRET)
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
+    
+    # Rate Limiting
+    RATE_LIMIT_ENABLED: bool = True
+    AUTH_RATE_LIMIT_PER_MINUTE: int = 30
     
     # CORS
     CORS_ORIGINS: List[str] = [
@@ -39,5 +51,15 @@ class Settings(BaseSettings):
         env_file=os.path.join(BACKEND_DIR, ".env"),
         extra="ignore"
     )
+
+    @model_validator(mode="after")
+    def validate_production_security(self) -> "Settings":
+        if self.ENVIRONMENT in ("production", "prod"):
+            if self.JWT_SECRET == DEFAULT_DEV_SECRET or len(self.JWT_SECRET) < 32:
+                raise ValueError(
+                    "CRITICAL SECURITY CONFIGURATION ERROR: In production, JWT_SECRET must be explicitly "
+                    "configured in the environment with a cryptographically secure key of at least 32 characters."
+                )
+        return self
 
 settings = Settings()

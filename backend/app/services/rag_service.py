@@ -32,30 +32,66 @@ def cosine_similarity(v1: List[float], v2: List[float]) -> float:
         return 0.0
     return dot_product / (norm_a * norm_b)
 
+from collections import defaultdict
+
+class OkapiBM25Scorer:
+    """
+    Standard Okapi BM25 implementation for lexical document chunk ranking.
+    Formula:
+        Score(D, Q) = sum_{q in Q} IDF(q) * (f(q, D) * (k1 + 1)) / (f(q, D) + k1 * (1 - b + b * (|D| / avgdl)))
+    where:
+        IDF(q) = ln((N - n(q) + 0.5) / (n(q) + 0.5) + 1.0)
+    Parameters:
+        k1 = 1.5 (term frequency saturation)
+        b = 0.75 (document length penalty)
+    """
+    def __init__(self, corpus_texts: List[str], k1: float = 1.5, b: float = 0.75):
+        self.k1 = k1
+        self.b = b
+        self.corpus_size = max(len(corpus_texts), 1)
+        self.doc_tokens = [re.findall(r'\b\w{2,}\b', text.lower()) for text in corpus_texts]
+        self.doc_lens = [max(len(tokens), 1) for tokens in self.doc_tokens]
+        self.avgdl = sum(self.doc_lens) / self.corpus_size
+
+        self.df = defaultdict(int)
+        for tokens in self.doc_tokens:
+            for term in set(tokens):
+                self.df[term] += 1
+
+    def idf(self, term: str) -> float:
+        n_q = self.df.get(term, 0)
+        return math.log(((self.corpus_size - n_q + 0.5) / (n_q + 0.5)) + 1.0)
+
+    def score_document(self, query: str, doc_index: int) -> float:
+        q_terms = re.findall(r'\b\w{2,}\b', query.lower())
+        if not q_terms or doc_index >= len(self.doc_tokens):
+            return 0.0
+
+        doc_terms = self.doc_tokens[doc_index]
+        doc_len = self.doc_lens[doc_index]
+        tf_map = defaultdict(int)
+        for t in doc_terms:
+            tf_map[t] += 1
+
+        total_score = 0.0
+        for term in set(q_terms):
+            f_q = tf_map.get(term, 0)
+            if f_q == 0:
+                continue
+            term_idf = self.idf(term)
+            numerator = f_q * (self.k1 + 1.0)
+            denominator = f_q + self.k1 * (1.0 - self.b + self.b * (doc_len / max(self.avgdl, 1.0)))
+            total_score += term_idf * (numerator / denominator)
+
+        return round(max(0.0, total_score), 4)
+
 def compute_lexical_score(query: str, doc_text: str) -> float:
     """
-    Computes BM25-inspired term overlap score between query and document text.
+    Computes Okapi BM25 score for a single document text against query.
     """
-    q_tokens = re.findall(r'\b\w{3,}\b', query.lower())
-    if not q_tokens:
-        return 0.0
-    doc_lower = doc_text.lower()
-    doc_words = re.findall(r'\b\w{3,}\b', doc_lower)
-    doc_len = max(len(doc_words), 1)
+    scorer = OkapiBM25Scorer([doc_text])
+    return scorer.score_document(query, 0)
 
-    matched_tokens = 0
-    tf_sum = 0.0
-
-    for token in set(q_tokens):
-        count = doc_lower.count(token)
-        if count > 0:
-            matched_tokens += 1
-            # Sub-linear term frequency saturation
-            tf_sum += (count / (count + 1.2))
-
-    coverage = matched_tokens / len(set(q_tokens))
-    score = (0.6 * coverage) + (0.4 * min(1.0, tf_sum / len(set(q_tokens))))
-    return round(score, 4)
 
 class RAGService:
     @staticmethod
@@ -118,14 +154,17 @@ class RAGService:
         rows = result.all()
 
         scored_chunks = []
-        for chunk_id, content, page_num, doc_id, doc_title, emb_json in rows:
+        corpus_texts = [r[1] for r in rows]
+        bm25_scorer = OkapiBM25Scorer(corpus_texts) if corpus_texts else None
+
+        for idx, (chunk_id, content, page_num, doc_id, doc_title, emb_json) in enumerate(rows):
             try:
                 emb_vec = json.loads(emb_json)
                 dense_score = max(0.0, cosine_similarity(query_vector, emb_vec))
-                lexical_score = compute_lexical_score(query, content)
+                lexical_score = bm25_scorer.score_document(query, idx) if bm25_scorer else 0.0
 
                 # Combined Initial Hybrid Score
-                hybrid_score = round((alpha * dense_score) + ((1.0 - alpha) * lexical_score), 4)
+                hybrid_score = round((alpha * dense_score) + ((1.0 - alpha) * min(1.0, lexical_score / 5.0)), 4)
 
                 scored_chunks.append({
                     "chunk_id": chunk_id,

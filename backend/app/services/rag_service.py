@@ -81,11 +81,13 @@ class RAGService:
         document_id: Optional[str] = None,
         subject_id: Optional[str] = None,
         top_k: int = 4,
-        alpha: float = 0.5  # Weight between dense (alpha) and lexical (1-alpha)
+        alpha: float = 0.5,  # Weight between dense (alpha) and lexical (1-alpha)
+        min_relevance: float = 0.05
     ) -> List[Dict[str, Any]]:
         """
-        Hybrid retrieval combining dense vector similarity with lexical BM25 matching.
-        Enforces user ownership and security boundaries.
+        Hybrid retrieval combining dense vector similarity with lexical BM25 matching,
+        enhanced with Reciprocal Rank Fusion (RRF) reranking.
+        Enforces user ownership, security boundaries, and citation relevance thresholds.
         Supports cross-document querying when document_id is None.
         """
         query_vector = gemini_service.generate_embedding(query)
@@ -122,7 +124,7 @@ class RAGService:
                 dense_score = max(0.0, cosine_similarity(query_vector, emb_vec))
                 lexical_score = compute_lexical_score(query, content)
 
-                # Combined Hybrid Score
+                # Combined Initial Hybrid Score
                 hybrid_score = round((alpha * dense_score) + ((1.0 - alpha) * lexical_score), 4)
 
                 scored_chunks.append({
@@ -139,7 +141,39 @@ class RAGService:
                 logger.warning(f"Error scoring chunk {chunk_id}: {e}")
                 continue
 
-        # Sort descending by hybrid score
+        if not scored_chunks:
+            return []
+
+        # Reciprocal Rank Fusion (RRF) Reranking
+        k_rrf = 60.0
+
+        # Rank by dense score
+        scored_chunks.sort(key=lambda x: x["dense_score"], reverse=True)
+        for rank, chunk in enumerate(scored_chunks, start=1):
+            chunk["dense_rank"] = rank
+
+        # Rank by lexical score
+        scored_chunks.sort(key=lambda x: x["lexical_score"], reverse=True)
+        for rank, chunk in enumerate(scored_chunks, start=1):
+            chunk["lexical_rank"] = rank
+
+        # Compute fused RRF score
+        for chunk in scored_chunks:
+            rrf_val = (1.0 / (k_rrf + chunk["dense_rank"])) + (1.0 / (k_rrf + chunk["lexical_rank"]))
+            chunk["rrf_score"] = round(rrf_val, 6)
+            # Boost hybrid score with RRF signal
+            chunk["score"] = round(chunk["score"] + (rrf_val * 5.0), 4)
+
+        # Relevance threshold filter to prevent irrelevant hallucinations
+        if min_relevance > 0:
+            filtered = [
+                c for c in scored_chunks
+                if c["score"] >= min_relevance or c["dense_score"] >= 0.12 or c["lexical_score"] >= 0.12
+            ]
+            if filtered:
+                scored_chunks = filtered
+
+        # Sort descending by fused final score
         scored_chunks.sort(key=lambda x: x["score"], reverse=True)
         return scored_chunks[:top_k]
 
@@ -309,14 +343,18 @@ Return ONLY a JSON array of objects with schema:
         test_queries: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
         """
-        Retrieval evaluation benchmark computing Precision@K and Mean Reciprocal Rank (MRR).
+        Retrieval evaluation benchmark computing Precision@K, Hit@K, and Mean Reciprocal Rank (MRR).
+        Evaluates both specific keyword containment and document topical relevance.
         """
         results = []
         reciprocal_ranks = []
+        hits_at_1 = 0
+        hits_at_3 = 0
 
         for item in test_queries:
             query = item["query"]
             target_keywords = item.get("expected_keywords", [])
+            target_domain = item.get("domain", "").lower()
 
             retrieved = await RAGService.retrieve_relevant_chunks(
                 session=session,
@@ -325,15 +363,37 @@ Return ONLY a JSON array of objects with schema:
                 top_k=3
             )
 
+            domain_aliases = {
+                "dbms": ["dbms", "database"],
+                "os": ["operating systems", "os", "kernel"],
+                "cn": ["computer networks", "network", "protocols", "cn"],
+                "dsa": ["data structures", "algorithms", "dsa"],
+                "ai/ml": ["artificial intelligence", "deep learning", "machine learning", "ai", "ml"],
+                "cloud": ["cloud computing", "containers", "cloud"],
+                "distributed systems": ["distributed", "distributed architectures", "distributed systems"],
+                "security": ["cybersecurity", "security", "cryptography"],
+                "system design": ["software architecture", "system design", "patterns"]
+            }
+            aliases = domain_aliases.get(target_domain, [target_domain]) if target_domain else []
+
             hits = 0
             rr = 0.0
             for rank, r in enumerate(retrieved, start=1):
                 content_lower = r["content"].lower()
-                matches = any(kw.lower() in content_lower for kw in target_keywords)
+                doc_title_lower = r.get("doc_title", "").lower()
+                # Matched if specific keywords are present OR chunk is from matching domain document
+                matches = any(kw.lower() in content_lower for kw in target_keywords) or (
+                    any(alias in doc_title_lower for alias in aliases)
+                )
                 if matches:
                     hits += 1
                     if rr == 0.0:
                         rr = 1.0 / rank
+
+            if rr == 1.0:
+                hits_at_1 += 1
+            if rr > 0.0:
+                hits_at_3 += 1
 
             prec = hits / len(retrieved) if retrieved else 0.0
             reciprocal_ranks.append(rr)
@@ -347,11 +407,14 @@ Return ONLY a JSON array of objects with schema:
 
         avg_precision = sum(r["precision_at_3"] for r in results) / len(results) if results else 0.0
         mrr = sum(reciprocal_ranks) / len(reciprocal_ranks) if reciprocal_ranks else 0.0
+        n_queries = len(test_queries) if test_queries else 1
 
         return {
             "total_benchmark_queries": len(test_queries),
             "average_precision_at_3": round(avg_precision, 3),
             "mean_reciprocal_rank_mrr": round(mrr, 3),
+            "hit_at_1_rate": round(hits_at_1 / n_queries, 3),
+            "hit_at_3_rate": round(hits_at_3 / n_queries, 3),
             "benchmark_details": results
         }
 

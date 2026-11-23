@@ -534,3 +534,64 @@ class PlannerProgressResponse(BaseModel):
     learning_streak_days: int
     weak_topics_covered_count: int
 
+# --- AI Intelligence & Evaluation Schemas ---
+class AssistantAskRequest(BaseModel):
+    question: str
+    conversation_id: Optional[str] = None
+    document_id: Optional[str] = None
+    subject_id: Optional[str] = None
+    language: Optional[str] = "auto"
+    explanation_level: Optional[str] = "intermediate"  # beginner, intermediate, advanced, eli5, exam_oriented, real_world
+
+class AssistantAskResponse(BaseModel):
+    conversation_id: str
+    user_message: ChatMessageResponse
+    assistant_message: ChatMessageResponse
+
+class AssistantRegenerateRequest(BaseModel):
+    conversation_id: str
+    explanation_level: Optional[str] = "intermediate"
+
+class AssistantRegenerateResponse(BaseModel):
+    conversation_id: str
+    assistant_message: ChatMessageResponse
+
+class AnswerEvaluationRequest(BaseModel):
+    question: str
+    answer: str
+    context: Optional[str] = None
+    criteria: Optional[List[str]] = None
+
+class AnswerEvaluationResponse(BaseModel):
+    relevance_score: float  # 0 to 10
+    accuracy_score: float   # 0 to 10
+    clarity_score: float    # 0 to 10
+    completeness_score: float # 0 to 10
+    overall_score: float    # 0 to 100
+    evaluation_level: str   # Excellent, Proficient, Needs Work, Incomplete
+    strengths: List[str]
+    areas_for_improvement: List[str]
+    actionable_feedback: str
+
+# --- Career JD Skill Extractor Schemas ---
+class JobDescriptionAnalysisRequest(BaseModel):
+    job_title: Optional[str] = "Software Engineer"
+    company_name: Optional[str] = None
+    job_description_text: str
+    target_career_id: Optional[str] = None
+
+class JobDescriptionAnalysisResponse(BaseModel):
+    job_title: str
+    company_name: Optional[str] = None
+    overall_match_percentage: float
+    demonstrated_match_score: float
+    self_reported_match_score: float
+    readiness_status: str  # Ready for Applications, Minor Preparation Needed, Significant Bridge Needed
+    extracted_required_skills: List[str]
+    verified_demonstrated_skills: List[str]
+    self_reported_skills: List[str]
+    missing_skills: List[str]
+    recommended_bridge_projects: List[Dict[str, Any]]
+    recommended_study_topics: List[str]
+    summary_analysis: str
+

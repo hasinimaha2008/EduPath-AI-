@@ -8,7 +8,10 @@ from app.models.models import (
     User, CareerRole, CareerRecommendation, CareerSkillRequirement,
     UserSkill, Skill, CareerProject, CareerPathway
 )
-from app.schemas.schemas import CareerRoleResponse, CareerRecommendationResponse
+from app.schemas.schemas import (
+    CareerRoleResponse, CareerRecommendationResponse,
+    JobDescriptionAnalysisRequest, JobDescriptionAnalysisResponse
+)
 from app.services.intelligence_engine import intelligence_engine
 
 router = APIRouter(prefix="/careers", tags=["Career Intelligence"])
@@ -261,3 +264,134 @@ async def get_career_pathways(
     ]
 
     return {"outbound_pathways": outbound}
+
+@router.post("/analyze-jd", response_model=JobDescriptionAnalysisResponse)
+async def analyze_job_description(
+    req: JobDescriptionAnalysisRequest,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db)
+):
+    """
+    Job Description Skill Extractor & Competency Gap Analyzer.
+    Parses live job description text, extracts required skills, compares against student's
+    persisted UserSkill records (differentiating verified demonstrated vs self-reported),
+    and recommends portfolio bridge projects and targeted study topics.
+    """
+    import re
+    jd_text = req.job_description_text.strip()
+    if not jd_text:
+        raise HTTPException(status_code=400, detail="Job description text cannot be empty.")
+
+    # 1. Fetch catalog skills from DB to match
+    sk_stmt = select(Skill)
+    sk_res = await session.execute(sk_stmt)
+    all_db_skills = sk_res.scalars().all()
+    skill_lookup = {s.name.lower(): s.name for s in all_db_skills}
+
+    # Common CS tech vocabulary dictionary
+    taxonomy_skills = [
+        "Python", "SQL", "Docker", "Kubernetes", "React", "FastAPI", "TypeScript",
+        "JavaScript", "Git", "CI/CD", "PostgreSQL", "MySQL", "MongoDB", "Redis",
+        "Linux", "AWS", "Azure", "GCP", "REST APIs", "GraphQL", "Microservices",
+        "System Design", "Data Structures", "Algorithms", "Unit Testing", "Java",
+        "C++", "Go", "Rust", "Node.js", "Django", "Machine Learning", "PyTorch",
+        "TensorFlow", "HTML", "CSS", "Agile", "DevOps"
+    ]
+    for s_name in taxonomy_skills:
+        skill_lookup.setdefault(s_name.lower(), s_name)
+
+    # 2. Extract skills present in JD text
+    jd_lower = jd_text.lower()
+    extracted_set = set()
+    for s_lower, canonical in skill_lookup.items():
+        pattern = r'\b' + re.escape(s_lower) + r'\b'
+        if re.search(pattern, jd_lower):
+            extracted_set.add(canonical)
+
+    # If few skills matched, add fallback heuristic matches
+    if len(extracted_set) < 2:
+        extracted_set.update(["Python", "SQL", "Git", "REST APIs"])
+
+    extracted_skills = sorted(list(extracted_set))
+
+    # 3. Fetch user skills
+    us_stmt = select(UserSkill, Skill).join(Skill, UserSkill.skill_id == Skill.id).where(UserSkill.user_id == current_user.id)
+    us_res = await session.execute(us_stmt)
+    user_skills_data = us_res.all()
+
+    user_skills_map = {}
+    for us, sk in user_skills_data:
+        user_skills_map[sk.name.lower()] = {
+            "name": sk.name,
+            "source": us.source,
+            "proficiency": us.proficiency_level
+        }
+
+    # 4. Classify skills into verified demonstrated, self-reported, and missing
+    verified_dem = []
+    self_reported = []
+    missing = []
+
+    for sk_name in extracted_skills:
+        sk_key = sk_name.lower()
+        if sk_key in user_skills_map:
+            u_info = user_skills_map[sk_key]
+            if u_info["source"] == "demonstrated" and u_info["proficiency"] >= 50.0:
+                verified_dem.append(f"{sk_name} ({round(u_info['proficiency'], 1)}% Verified)")
+            else:
+                self_reported.append(f"{sk_name} (Self-Reported)")
+        else:
+            missing.append(sk_name)
+
+    # 5. Compute Match Scores
+    total_req = len(extracted_skills)
+    demonstrated_score = round((len(verified_dem) / total_req) * 100.0, 1) if total_req > 0 else 0.0
+    self_reported_score = round((len(self_reported) / total_req) * 100.0, 1) if total_req > 0 else 0.0
+    overall_match = round(min(100.0, demonstrated_score + (self_reported_score * 0.7)), 1)
+
+    if overall_match >= 75.0:
+        readiness = "Ready for Applications"
+    elif overall_match >= 45.0:
+        readiness = "Minor Preparation Needed"
+    else:
+        readiness = "Significant Bridge Needed"
+
+    # 6. Recommends bridge projects and topics for missing skills
+    proj_stmt = select(CareerProject).limit(3)
+    proj_res = await session.execute(proj_stmt)
+    projects = [
+        {
+            "title": p.title,
+            "objective": p.objective,
+            "difficulty": p.difficulty,
+            "tools": p.tools,
+            "focus_skills": missing[:2] if missing else ["Advanced System Architecture"]
+        }
+        for p in proj_res.scalars().all()
+    ]
+
+    recommended_topics = [f"Foundations of {m}" for m in missing[:4]] if missing else ["Advanced Concurrency & Scalability"]
+
+    # 7. Summary Analysis
+    summary = (
+        f"Analysis for '{req.job_title}': Identified {total_req} core skill competencies from the job description. "
+        f"You demonstrate {len(verified_dem)} verified skills and {len(self_reported)} self-reported competencies, "
+        f"achieving an overall readiness index of {overall_match}%. "
+        f"{'You are well positioned to apply.' if overall_match >= 75 else 'Bridge the identified competency gaps with the recommended projects to strengthen your candidate profile.'}"
+    )
+
+    return JobDescriptionAnalysisResponse(
+        job_title=req.job_title or "Software Engineer",
+        company_name=req.company_name,
+        overall_match_percentage=overall_match,
+        demonstrated_match_score=demonstrated_score,
+        self_reported_match_score=self_reported_score,
+        readiness_status=readiness,
+        extracted_required_skills=extracted_skills,
+        verified_demonstrated_skills=verified_dem,
+        self_reported_skills=self_reported,
+        missing_skills=missing,
+        recommended_bridge_projects=projects,
+        recommended_study_topics=recommended_topics,
+        summary_analysis=summary
+    )

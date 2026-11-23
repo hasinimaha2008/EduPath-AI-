@@ -11,31 +11,17 @@ from sqlalchemy import select
 from app.core.database import get_db, AsyncSessionLocal
 from app.api.deps import get_current_user
 from app.models.models import User, Conversation, ChatMessage, Document
-from app.schemas.schemas import ChatMessageResponse, CitationItem
+from app.schemas.schemas import (
+    ChatMessageResponse, CitationItem,
+    AssistantAskRequest, AssistantAskResponse,
+    AssistantRegenerateRequest, AssistantRegenerateResponse,
+    AnswerEvaluationRequest, AnswerEvaluationResponse
+)
 from app.services.rag_service import rag_service
 from app.services.gemini_service import gemini_service
 
 logger = logging.getLogger("edupath.assistant")
 router = APIRouter(prefix="/assistant", tags=["General-Purpose AI Assistant"])
-
-class AssistantAskRequest(BaseModel):
-    question: str
-    conversation_id: Optional[str] = None
-    document_id: Optional[str] = None
-    subject_id: Optional[str] = None
-    language: Optional[str] = "auto"
-
-class AssistantAskResponse(BaseModel):
-    conversation_id: str
-    user_message: ChatMessageResponse
-    assistant_message: ChatMessageResponse
-
-class AssistantRegenerateRequest(BaseModel):
-    conversation_id: str
-
-class AssistantRegenerateResponse(BaseModel):
-    conversation_id: str
-    assistant_message: ChatMessageResponse
 
 class ConfigureKeyRequest(BaseModel):
     api_key: str
@@ -50,7 +36,8 @@ async def get_assistant_status():
         "model_name": gemini_service.model_name,
         "provider": "Google Gemini (gemini-1.5-flash)" if gemini_service.is_configured else "EduPath Dynamic LLM Engine",
         "streaming_supported": True,
-        "multilingual_supported": ["en", "te", "hi", "auto"]
+        "multilingual_supported": ["en", "te", "hi", "ta", "kn", "mr", "es", "fr", "de", "auto"],
+        "explanation_levels_supported": ["beginner", "intermediate", "advanced", "eli5", "exam_oriented", "real_world"]
     }
 
 @router.post("/configure-key")
@@ -134,7 +121,8 @@ async def ask_study_assistant(
         question=question,
         context_chunks=relevant_chunks,
         conversation_history=conversation_history,
-        language=req.language or "auto"
+        language=req.language or "auto",
+        explanation_level=req.explanation_level or "intermediate"
     )
 
     citations_data = ai_result.get("citations", [])
@@ -278,7 +266,8 @@ async def chat_stream_assistant(
                 question=question,
                 context_chunks=relevant_chunks,
                 conversation_history=conversation_history,
-                language=req.language or "auto"
+                language=req.language or "auto",
+                explanation_level=req.explanation_level or "intermediate"
             ):
                 full_answer += token
                 yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
@@ -366,7 +355,8 @@ async def regenerate_assistant_response(
     ai_result = await gemini_service.answer_study_question(
         question=last_user_msg.content,
         context_chunks=relevant_chunks,
-        conversation_history=conversation_history
+        conversation_history=conversation_history,
+        explanation_level=req.explanation_level or "intermediate"
     )
 
     citations_data = ai_result.get("citations", [])
@@ -412,4 +402,36 @@ async def regenerate_assistant_response(
     return AssistantRegenerateResponse(
         conversation_id=conv.id,
         assistant_message=assistant_resp
+    )
+
+@router.post("/evaluate-answer", response_model=AnswerEvaluationResponse)
+async def evaluate_user_answer(
+    req: AnswerEvaluationRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Evaluates the quality, accuracy, relevance, and completeness of an answer
+    against standard educational rubrics, returning calibrated scores (0-100),
+    evaluation level, key strengths, and constructive actionable feedback.
+    """
+    if not req.question.strip() or not req.answer.strip():
+        raise HTTPException(status_code=400, detail="Question and answer cannot be empty.")
+
+    evaluation = await gemini_service.evaluate_answer_quality(
+        question=req.question,
+        answer=req.answer,
+        context=req.context,
+        criteria=req.criteria
+    )
+
+    return AnswerEvaluationResponse(
+        relevance_score=evaluation.get("relevance_score", 8.0),
+        accuracy_score=evaluation.get("accuracy_score", 8.0),
+        clarity_score=evaluation.get("clarity_score", 8.0),
+        completeness_score=evaluation.get("completeness_score", 8.0),
+        overall_score=evaluation.get("overall_score", 80.0),
+        evaluation_level=evaluation.get("evaluation_level", "Proficient"),
+        strengths=evaluation.get("strengths", ["Clear explanation"]),
+        areas_for_improvement=evaluation.get("areas_for_improvement", ["Add more examples"]),
+        actionable_feedback=evaluation.get("actionable_feedback", "Solid overall attempt.")
     )

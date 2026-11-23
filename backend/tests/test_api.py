@@ -237,3 +237,87 @@ async def test_multi_tenant_data_isolation():
         u2_direct = await ac.get(f"/api/notes/{note_1_id}", headers=h2)
         assert u2_direct.status_code in (404, 403)
 
+@pytest.mark.asyncio
+async def test_ai_assistant_explanation_levels_and_evaluation():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        login_res = await ac.get("/api/auth/demo-login")
+        token = login_res.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # 1. Verify /status endpoint reports expanded languages and explanation levels
+        status_res = await ac.get("/api/assistant/status")
+        assert status_res.status_code == 200
+        status_data = status_res.json()
+        assert "multilingual_supported" in status_data
+        assert "ta" in status_data["multilingual_supported"]
+        assert "es" in status_data["multilingual_supported"]
+        assert "explanation_levels_supported" in status_data
+        assert "eli5" in status_data["explanation_levels_supported"]
+        assert "advanced" in status_data["explanation_levels_supported"]
+
+        # 2. Test ask with explanation_level='eli5'
+        eli5_res = await ac.post("/api/assistant/ask", json={
+            "question": "What is a database index?",
+            "explanation_level": "eli5"
+        }, headers=headers)
+        assert eli5_res.status_code == 200
+        eli5_answer = eli5_res.json()["assistant_message"]["content"]
+        assert len(eli5_answer) > 50
+        assert "ELI5" in eli5_answer or "simple" in eli5_answer.lower()
+
+        # 3. Test ask with explanation_level='advanced'
+        adv_res = await ac.post("/api/assistant/ask", json={
+            "question": "Explain B-Tree indexing concurrency",
+            "explanation_level": "advanced"
+        }, headers=headers)
+        assert adv_res.status_code == 200
+        adv_answer = adv_res.json()["assistant_message"]["content"]
+        assert len(adv_answer) > 50
+        assert "Advanced" in adv_answer or "Complexity" in adv_answer or "Invariants" in adv_answer
+
+        # 4. Test POST /api/assistant/evaluate-answer
+        eval_res = await ac.post("/api/assistant/evaluate-answer", json={
+            "question": "What are ACID properties in database management systems?",
+            "answer": "ACID stands for Atomicity, Consistency, Isolation, and Durability. Atomicity ensures all or nothing. Consistency keeps constraints. Isolation prevents race conditions. Durability writes changes to non-volatile disk logs."
+        }, headers=headers)
+        assert eval_res.status_code == 200
+        eval_data = eval_res.json()
+        assert "overall_score" in eval_data
+        assert eval_data["overall_score"] >= 60.0
+        assert "relevance_score" in eval_data
+        assert "accuracy_score" in eval_data
+        assert len(eval_data["strengths"]) > 0
+        assert "actionable_feedback" in eval_data
+
+@pytest.mark.asyncio
+async def test_career_jd_skill_analyzer():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        login_res = await ac.get("/api/auth/demo-login")
+        token = login_res.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        jd_text = """
+        We are seeking a Backend Software Engineer with strong experience in Python, SQL,
+        FastAPI or Django, Docker containerization, PostgreSQL, and Git version control.
+        Experience with Kubernetes, CI/CD pipelines, and Microservices is a plus.
+        """
+
+        res = await ac.post("/api/careers/analyze-jd", json={
+            "job_title": "Senior Backend Software Engineer",
+            "company_name": "Tech Innovations Inc.",
+            "job_description_text": jd_text
+        }, headers=headers)
+
+        assert res.status_code == 200
+        data = res.json()
+        assert data["job_title"] == "Senior Backend Software Engineer"
+        assert len(data["extracted_required_skills"]) >= 4
+        assert "Python" in data["extracted_required_skills"]
+        assert "SQL" in data["extracted_required_skills"]
+        assert "overall_match_percentage" in data
+        assert "readiness_status" in data
+        assert isinstance(data["recommended_bridge_projects"], list)
+        assert len(data["summary_analysis"]) > 20
+

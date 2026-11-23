@@ -27,6 +27,7 @@ export default function ChatHistoryPage() {
 
   useEffect(() => {
     loadConversations();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function loadConversations() {

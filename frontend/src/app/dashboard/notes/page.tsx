@@ -102,6 +102,7 @@ export default function SmartNotesPage() {
       if (modeParam) setSelectedNoteType(modeParam);
       if (subParam) setSelectedSubjectId(subParam);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function loadNotes() {

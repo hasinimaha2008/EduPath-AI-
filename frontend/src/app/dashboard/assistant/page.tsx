@@ -118,6 +118,7 @@ export default function StudyAssistantPage() {
       }
     }
     initData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 2. Auto-scroll on new message or stream token

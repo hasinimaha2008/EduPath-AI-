@@ -136,6 +136,74 @@ def test_production_default_database_backup_generation():
                 pass
 
 
+def test_backup_metadata_sidecar_and_checksum_tamper_rejection():
+    """
+    Verifies that backup_database generates a valid metadata sidecar with table stats,
+    and restore_database detects and rejects backups whose checksums do not match metadata.
+    """
+    import json
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as src_tmp:
+        src_path = src_tmp.name
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as dst_tmp:
+        backup_path = dst_tmp.name
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as target_tmp:
+        target_path = target_tmp.name
+
+    meta_path = backup_path + ".meta.json"
+
+    try:
+        # Populate source DB
+        conn = sqlite3.connect(src_path)
+        cur = conn.cursor()
+        cur.execute("CREATE TABLE inventory (item_id TEXT PRIMARY KEY, qty INT);")
+        cur.execute("INSERT INTO inventory VALUES ('gpu-h100', 16);")
+        conn.commit()
+        conn.close()
+
+        # Target DB
+        t_conn = sqlite3.connect(target_path)
+        t_cur = t_conn.cursor()
+        t_cur.execute("CREATE TABLE target_original (status TEXT);")
+        t_cur.execute("INSERT INTO target_original VALUES ('original_safe');")
+        t_conn.commit()
+        t_conn.close()
+
+        # Generate backup
+        b_path, csum, sz = backup_database(destination_path=backup_path, source_path=src_path)
+        assert os.path.exists(meta_path), "Metadata sidecar must be generated"
+
+        with open(meta_path, "r", encoding="utf-8") as mf:
+            meta = json.load(mf)
+        assert meta["sha256"] == csum
+        assert meta["size_bytes"] == sz
+        assert "inventory" in meta["tables"]
+        assert meta["table_count"] >= 1
+
+        # Tamper with the backup file (modify a single byte)
+        with open(backup_path, "r+b") as bf:
+            bf.seek(10)
+            bf.write(b"X")
+
+        # Restoration must detect checksum mismatch against metadata sidecar
+        with pytest.raises(Exception) as exc_info:
+            restore_database(backup_path=backup_path, target_path=target_path)
+        assert "mismatch" in str(exc_info.value).lower() or "corrupt" in str(exc_info.value).lower()
+
+        # Original target database was not corrupted or modified
+        chk_conn = sqlite3.connect(target_path)
+        chk_cur = chk_conn.cursor()
+        chk_cur.execute("SELECT status FROM target_original;")
+        assert chk_cur.fetchone()[0] == "original_safe"
+        chk_conn.close()
+
+    finally:
+        for p in [src_path, backup_path, target_path, meta_path]:
+            if os.path.exists(p):
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
+
 
 def test_corrupt_backup_rejected_without_corrupting_existing_data():
     """

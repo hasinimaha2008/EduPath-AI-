@@ -5,6 +5,7 @@ Provides zero-downtime hot backups and atomic restoration for SQLite and Postgre
 
 import os
 import sys
+import json
 import shutil
 import sqlite3
 import hashlib
@@ -85,6 +86,36 @@ def backup_database(destination_path: Optional[str] = None, source_path: Optiona
 
         size = os.path.getsize(destination_path)
         checksum = calculate_sha256(destination_path)
+
+        # Extract table statistics for metadata sidecar
+        tables = []
+        try:
+            stat_conn = sqlite3.connect(destination_path)
+            cur = stat_conn.cursor()
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';")
+            tables = [row[0] for row in cur.fetchall()]
+            stat_conn.close()
+        except Exception as e:
+            logger.warning(f"Could not extract table statistics for metadata: {e}")
+
+        # Produce structured metadata sidecar
+        meta_path = destination_path + ".meta.json"
+        try:
+            with open(meta_path, "w", encoding="utf-8") as mf:
+                json.dump({
+                    "timestamp": timestamp,
+                    "source_path": src_path,
+                    "backup_path": destination_path,
+                    "sha256": checksum,
+                    "size_bytes": size,
+                    "table_count": len(tables),
+                    "tables": tables,
+                    "integrity_status": "ok",
+                    "dialect": "sqlite"
+                }, mf, indent=2)
+        except Exception as e:
+            logger.warning(f"Could not write metadata sidecar: {e}")
+
         logger.info(f"Backup completed successfully: {destination_path} ({size} bytes, SHA256: {checksum[:12]}...)")
         return destination_path, checksum, size
 
@@ -103,6 +134,21 @@ def backup_database(destination_path: Optional[str] = None, source_path: Optiona
 
         size = os.path.getsize(destination_path)
         checksum = calculate_sha256(destination_path)
+
+        # Produce metadata sidecar for Postgres
+        meta_path = destination_path + ".meta.json"
+        try:
+            with open(meta_path, "w", encoding="utf-8") as mf:
+                json.dump({
+                    "timestamp": timestamp,
+                    "backup_path": destination_path,
+                    "sha256": checksum,
+                    "size_bytes": size,
+                    "dialect": "postgresql"
+                }, mf, indent=2)
+        except Exception:
+            pass
+
         logger.info(f"PostgreSQL backup completed: {destination_path} ({size} bytes)")
         return destination_path, checksum, size
 
@@ -113,10 +159,25 @@ def backup_database(destination_path: Optional[str] = None, source_path: Optiona
 def restore_database(backup_path: str, target_path: Optional[str] = None) -> bool:
     """
     Safely restores the database from a verified backup archive.
-    Ensures atomic replacement with rollback recovery on corrupt or failing archives.
+    Validates checksum metadata sidecar, pre-checks PRAGMA integrity,
+    maintains a pre-restore safety snapshot, and atomically replaces target.
     """
     if not os.path.exists(backup_path):
         raise FileNotFoundError(f"Specified backup file does not exist: {backup_path}")
+
+    # Check for metadata sidecar and verify checksum if available
+    meta_path = backup_path + ".meta.json"
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, "r", encoding="utf-8") as mf:
+                meta = json.load(mf)
+                expected_sha = meta.get("sha256")
+                if expected_sha:
+                    actual_sha = calculate_sha256(backup_path)
+                    if actual_sha != expected_sha:
+                        raise ValueError(f"Backup SHA256 mismatch against metadata sidecar: expected {expected_sha}, got {actual_sha}")
+        except json.JSONDecodeError:
+            logger.warning(f"Metadata sidecar at {meta_path} was corrupted; proceeding with PRAGMA check.")
 
     db_url = settings.DATABASE_URL
     is_sqlite = (target_path and target_path.endswith(".db")) or ("sqlite" in db_url)
@@ -126,7 +187,7 @@ def restore_database(backup_path: str, target_path: Optional[str] = None) -> boo
         if not dest_path:
             raise ValueError("Target database path could not be determined.")
 
-        # Verify integrity of backup before restoring
+        # Verify integrity of backup archive BEFORE attempting any restore
         verify_conn = sqlite3.connect(backup_path)
         cursor = verify_conn.cursor()
         cursor.execute("PRAGMA integrity_check;")
@@ -135,18 +196,58 @@ def restore_database(backup_path: str, target_path: Optional[str] = None) -> boo
         if not res or res[0] != "ok":
             raise ValueError(f"Cannot restore from corrupt backup: {res}")
 
+        # Pre-restore safety snapshot to guarantee non-destructive recovery
+        safety_snapshot = dest_path + ".safety_pre_restore.bak"
+        has_existing_dest = os.path.exists(dest_path)
+        if has_existing_dest:
+            shutil.copy2(dest_path, safety_snapshot)
+
         # Atomic copy and swap with cleanup
         temp_dest = dest_path + ".restore.tmp"
         try:
             shutil.copy2(backup_path, temp_dest)
-            if os.path.exists(dest_path):
+            if has_existing_dest:
                 os.replace(temp_dest, dest_path)
             else:
                 os.rename(temp_dest, dest_path)
+
+            # Post-restore integrity verification
+            post_conn = sqlite3.connect(dest_path)
+            post_cur = post_conn.cursor()
+            post_cur.execute("PRAGMA integrity_check;")
+            post_res = post_cur.fetchone()
+            post_conn.close()
+
+            if not post_res or post_res[0] != "ok":
+                # Rollback from safety snapshot
+                if has_existing_dest and os.path.exists(safety_snapshot):
+                    os.replace(safety_snapshot, dest_path)
+                raise RuntimeError(f"Post-restore integrity check failed: {post_res}; rolled back cleanly.")
+
+            # On clean success, remove safety snapshot
+            if os.path.exists(safety_snapshot):
+                try:
+                    os.remove(safety_snapshot)
+                except Exception:
+                    pass
+
+        except Exception:
+            # Rollback to safety snapshot if failure occurred
+            if has_existing_dest and os.path.exists(safety_snapshot):
+                try:
+                    os.replace(safety_snapshot, dest_path)
+                except Exception:
+                    pass
+            raise
         finally:
             if os.path.exists(temp_dest):
                 try:
                     os.remove(temp_dest)
+                except Exception:
+                    pass
+            if os.path.exists(safety_snapshot):
+                try:
+                    os.remove(safety_snapshot)
                 except Exception:
                     pass
 

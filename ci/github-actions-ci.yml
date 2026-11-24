@@ -46,7 +46,7 @@ jobs:
         run: |
           python -m app.core.init_db
 
-      - name: Run Pytest Test Suites (42 Tests)
+      - name: Run Pytest Test Suites (44 Tests)
         working-directory: ./backend
         run: |
           python -m pytest tests/test_api.py tests/test_security_regression.py tests/test_assistant_correctness.py tests/test_backup_restore.py tests/test_path_security.py -v

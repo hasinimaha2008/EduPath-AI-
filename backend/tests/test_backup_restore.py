@@ -22,7 +22,7 @@ from app.core.security import get_password_hash
 
 def test_real_database_backup_and_restore_cycle():
     """
-    Validates online backup, SHA-256 checksums, PRAGMA check, and atomic restore.
+    Validates production backup_database(), SHA-256 checksums, PRAGMA check, and atomic restore.
     """
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as src_tmp:
         src_path = src_tmp.name
@@ -44,18 +44,15 @@ def test_real_database_backup_and_restore_cycle():
         conn.commit()
         conn.close()
 
-        # Execute hot online backup using sqlite3.backup
-        src_conn = sqlite3.connect(src_path)
-        dst_conn = sqlite3.connect(backup_path)
-        with dst_conn:
-            src_conn.backup(dst_conn)
-        dst_conn.close()
-        src_conn.close()
+        # Exercise actual production backup_database() utility
+        result_path, checksum, backup_size = backup_database(
+            destination_path=backup_path,
+            source_path=src_path
+        )
 
         assert os.path.exists(backup_path)
-        backup_size = os.path.getsize(backup_path)
+        assert result_path == backup_path
         assert backup_size > 0
-        checksum = calculate_sha256(backup_path)
         assert len(checksum) == 64
 
         # Verify backup database integrity
@@ -91,6 +88,53 @@ def test_real_database_backup_and_restore_cycle():
                     os.remove(p)
                 except Exception:
                     pass
+
+
+def test_missing_files_error_handling_in_backup_and_restore():
+    """
+    Verifies that backup_database and restore_database raise FileNotFoundError
+    when given non-existent paths.
+    """
+    non_existent = os.path.abspath("./non_existent_path_404.db")
+    if os.path.exists(non_existent):
+        os.remove(non_existent)
+
+    # Backup from missing source must raise FileNotFoundError
+    with pytest.raises(FileNotFoundError):
+        backup_database(destination_path="./tmp_backup.db", source_path=non_existent)
+
+    # Restore from missing backup archive must raise FileNotFoundError
+    with pytest.raises(FileNotFoundError):
+        restore_database(backup_path=non_existent, target_path="./tmp_target.db")
+
+
+def test_production_default_database_backup_generation():
+    """
+    Executes backup_database() against current production/configured database
+    and verifies the created archive has valid SHA256 and passes PRAGMA integrity check.
+    """
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp_dst:
+        prod_backup_path = tmp_dst.name
+
+    try:
+        path, csum, sz = backup_database(destination_path=prod_backup_path)
+        assert os.path.exists(path)
+        assert sz > 0
+        assert len(csum) == 64
+
+        # Validate integrity
+        conn = sqlite3.connect(path)
+        cur = conn.cursor()
+        cur.execute("PRAGMA integrity_check;")
+        assert cur.fetchone()[0] == "ok"
+        conn.close()
+    finally:
+        if os.path.exists(prod_backup_path):
+            try:
+                os.remove(prod_backup_path)
+            except Exception:
+                pass
+
 
 
 def test_corrupt_backup_rejected_without_corrupting_existing_data():

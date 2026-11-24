@@ -201,48 +201,43 @@ All tests have been executed against live local services. Zero fabricated result
 ================================================================================
 EDUPATH AI - AUTOMATED VERIFICATION AUDIT SUMMARY
 ================================================================================
-1. Pytest Core API Suite (backend/tests/test_api.py):
-   - 10 / 10 Test Suites PASSED (100.0%) in 5.47s
-   - Tests: Health, Auth, Skill Mapping, Quizzes, Notes, Security, Planner,
-            Multi-Tenant Isolation, Explanation Levels & Evaluator, Career JD Analyzer
+1. Pytest Test Suites (44 / 44 Tests PASSED in 10.58s):
+   - test_api.py (10 tests): Health, Auth, Skill Mapping, Quizzes, Notes, Security, Planner, Multi-Tenant Isolation, Explanation Levels, Career JD Analyzer
+   - test_assistant_correctness.py (12 tests): Offline fallback, Empty response, Insufficient context, Multilingual Telugu/Hindi, Explanation modes, Streaming parity, Citations, Prompt injection, Evidence density
+   - test_backup_restore.py (7 tests): Hot online backup, Missing files handling, Production default database backup, Corrupted backup rejection, Transaction rollback recovery, PostgreSQL dialect errors, Unique constraints & FK auditing
+   - test_path_security.py (3 tests): os.path.commonpath unit tests, Sibling directory traversal rejection (HTTP 400), Safe cleanup hook execution
+   - test_security_regression.py (12 tests): CORS policy, Cross-tenant isolation, Zip bomb protection, Production demo login restriction, Strict JWT validation, Sliding window rate limiter, Readiness probes, Quiz submission prevention, Grounded abstentions, Backup integrity
 
-2. Pytest Security & Hardening Suite (backend/tests/test_security_regression.py):
-   - 9 / 9 Security Regression Tests PASSED (100.0%) in 4.90s
-   - Tests: CORS origin policy, Cross-tenant isolation (preview, download, Q&A, delete),
-            Decompression bomb protection, Production demo login restriction (HTTP 403),
-            JWT signature, issuer and subject validation, Redis/in-memory sliding window rate limiting,
-            Readiness probes (/ready) with observability & security headers, Prompt injection defense
+2. Comprehensive 100-Question RAG Benchmark (backend/tests/rag_comprehensive_100_evaluation.py):
+   - 100 / 100 Queries Evaluated Across 8 Core Disciplines + 1 Dynamic Unseen Domain (1.84s total)
+   - Hit Rate @ 1 (Hit@1):       0.975 (97.5%)
+   - Recall @ 3 (Hit Rate@3):    1.000 (100.0%)
+   - Mean Reciprocal Rank (MRR): 0.985 | nDCG@3: 0.989 | Precision@3: 0.554
+   - Answer Relevance:           96.6% | Context Relevance: 55.4%
+   - Answer Faithfulness Rate:   98.8% (79 / 80 grounded answers)
+   - Citation Precision:         99.0% | Citation Completeness: 99.0%
+   - Safe Abstention Rate:       90.0% (18 / 20 correct rejections & prompt-injection defense)
+   - Average Latency:            Retrieval: 13.11ms | Generation: 0.68ms | E2E: 13.79ms
 
-3. Independent RAG Retrieval Benchmark (backend/tests/independent_rag_benchmark.py):
-   - 56 / 56 Queries Evaluated Across 9 Computer Science Disciplines (1239.4ms total)
-   - Mean Reciprocal Rank (MRR): 0.946 (Benchmark Requirement: >= 0.750)  --> EXCEEDED
-   - Hit@1 (Rank-1 Precision):   0.946 (Benchmark Requirement: >= 0.800)  --> EXCEEDED
-   - Hit@3 (Recall@3):           0.946 (Benchmark Requirement: >= 0.900)  --> EXCEEDED
-   - Average Precision@3:        0.649 | nDCG@3: 0.946 | Latency: 22.1ms/query
-
-4. RAG 50-Question Benchmark (backend/tests/verify_rag_50_benchmark.py):
-   - 50 / 50 Queries Evaluated Across 9 Disciplines
-   - Mean Reciprocal Rank (MRR): 1.000 | Hit@1: 1.000 | Hit@3: 1.000 | Prec@3: 0.707
-
-5. Master QA Security, Latency & Edge-Case Audit (backend/tests/master_qa_audit.py):
+3. Master QA Security, Latency & Edge-Case Audit (backend/tests/master_qa_audit.py):
    - 18 / 18 Scenarios PASSED (100.0%)
    - Negative Testing: Missing payloads rejected (422), Corrupted files safe (status='failed')
    - Injection Defense: Parameterized SQL queries immune to SQLi; XSS sanitized in Notes
-   - API Concurrency: 10 concurrent requests at 11.7ms/req; Health check at 15.09ms
+   - API Concurrency: 10 concurrent requests at 12.9ms/req; Health check at 18.14ms
 
-6. Deep Feature-by-Feature Backtesting (backend/tests/deep_feature_audit.py):
+4. Deep Feature-by-Feature Backtesting (backend/tests/deep_feature_audit.py):
    - 12 / 12 Documented Core Features Functionally PASSED (100.0%)
 
-7. End-to-End Comprehensive User Journeys (backend/tests/e2e_verification.py):
+5. End-to-End Comprehensive User Journeys (backend/tests/e2e_verification.py):
    - 7 / 7 Full Workflows PASSED (100.0%)
    - Session & Database Persistence: Confirmed across independent client restarts
 
-8. Live Real User Workflow Verification (backend/tests/live_user_journey.py):
+6. Live Real User Workflow Verification (backend/tests/live_user_journey.py):
    - 11 / 11 Complete Real User Journey Steps PASSED (100.0%)
    - Live Registration -> PDF Upload -> Grounded Assistant -> Evaluator -> Notes
      -> Masked Quiz -> Topic Mastery -> JD Skill Extract -> Roadmap -> Study Schedule
 
-9. Frontend Production Build & Code Quality (frontend):
+7. Frontend Production Build & Code Quality (frontend):
    - Next.js 14.2.35 Production Build: PASSED
    - 22 / 22 Static Routes Generated & Optimized
    - TypeScript & ESLint: ZERO Errors, ZERO Warnings

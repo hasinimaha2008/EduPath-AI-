@@ -37,7 +37,7 @@ def get_sqlite_db_path() -> Optional[str]:
     return None
 
 
-def backup_database(destination_path: Optional[str] = None) -> Tuple[str, str, int]:
+def backup_database(destination_path: Optional[str] = None, source_path: Optional[str] = None) -> Tuple[str, str, int]:
     """
     Executes an atomic online hot-backup of the database.
     Returns: (backup_file_path, sha256_checksum, file_size_bytes)
@@ -45,9 +45,12 @@ def backup_database(destination_path: Optional[str] = None) -> Tuple[str, str, i
     db_url = settings.DATABASE_URL
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
+    # Determine if SQLite based on source_path or db_url
+    is_sqlite = (source_path and source_path.endswith(".db")) or ("sqlite" in db_url)
+
     # 1. SQLite Hot Online Backup (zero lock, production safe)
-    if "sqlite" in db_url:
-        src_path = get_sqlite_db_path()
+    if is_sqlite:
+        src_path = os.path.abspath(source_path) if source_path else get_sqlite_db_path()
         if not src_path or not os.path.exists(src_path):
             raise FileNotFoundError(f"Source database file not found at: {src_path}")
 
@@ -76,6 +79,8 @@ def backup_database(destination_path: Optional[str] = None) -> Tuple[str, str, i
         verify_conn.close()
 
         if not check_result or check_result[0] != "ok":
+            if os.path.exists(destination_path):
+                os.remove(destination_path)
             raise ValueError(f"Backup integrity check failed: {check_result}")
 
         size = os.path.getsize(destination_path)
@@ -108,14 +113,16 @@ def backup_database(destination_path: Optional[str] = None) -> Tuple[str, str, i
 def restore_database(backup_path: str, target_path: Optional[str] = None) -> bool:
     """
     Safely restores the database from a verified backup archive.
+    Ensures atomic replacement with rollback recovery on corrupt or failing archives.
     """
     if not os.path.exists(backup_path):
         raise FileNotFoundError(f"Specified backup file does not exist: {backup_path}")
 
     db_url = settings.DATABASE_URL
+    is_sqlite = (target_path and target_path.endswith(".db")) or ("sqlite" in db_url)
 
-    if "sqlite" in db_url:
-        dest_path = target_path or get_sqlite_db_path()
+    if is_sqlite:
+        dest_path = os.path.abspath(target_path) if target_path else get_sqlite_db_path()
         if not dest_path:
             raise ValueError("Target database path could not be determined.")
 
@@ -128,13 +135,20 @@ def restore_database(backup_path: str, target_path: Optional[str] = None) -> boo
         if not res or res[0] != "ok":
             raise ValueError(f"Cannot restore from corrupt backup: {res}")
 
-        # Atomic copy
+        # Atomic copy and swap with cleanup
         temp_dest = dest_path + ".restore.tmp"
-        shutil.copy2(backup_path, temp_dest)
-        if os.path.exists(dest_path):
-            os.replace(temp_dest, dest_path)
-        else:
-            os.rename(temp_dest, dest_path)
+        try:
+            shutil.copy2(backup_path, temp_dest)
+            if os.path.exists(dest_path):
+                os.replace(temp_dest, dest_path)
+            else:
+                os.rename(temp_dest, dest_path)
+        finally:
+            if os.path.exists(temp_dest):
+                try:
+                    os.remove(temp_dest)
+                except Exception:
+                    pass
 
         logger.info(f"Database restored successfully from '{backup_path}' to '{dest_path}'.")
         return True

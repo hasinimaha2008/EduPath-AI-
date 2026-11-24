@@ -1,13 +1,21 @@
 """
 EduPath AI - AI Study Assistant & Conversational Engine.
 Handles context-aware multi-turn reasoning, token streaming, 6 explanation levels,
-10 multilingual locales, and document grounding.
+10 multilingual locales, and honest, verified document grounding.
+
+Rules:
+- Never generate generic fabricated technical claims (e.g. fake O(log n), fake CAS, fake atomicity) on unrelated questions.
+- When an AI provider is unavailable or returns empty, provide an honest, transparent fallback.
+- When document context is provided but insufficient, explicitly abstain instead of guessing.
+- Never attach citations to claims not derived from those sources.
+- Preserve explanation levels, multilingual support, citations, and streaming behavior.
 """
 
 import json
 import logging
 import asyncio
-from typing import List, Dict, Any, Optional, AsyncGenerator
+import re
+from typing import List, Dict, Any, Optional, Tuple, AsyncGenerator
 from app.services.ai.provider import llm_provider
 from app.services.ai.prompts import (
     GENERAL_PURPOSE_SYSTEM_PROMPT,
@@ -18,7 +26,61 @@ from app.services.ai.prompts import (
 
 logger = logging.getLogger("edupath.ai.assistant")
 
+STOPWORDS = {
+    "what", "which", "where", "when", "how", "why", "who", "whom",
+    "does", "explain", "describe", "tell", "show", "about", "this",
+    "that", "these", "those", "have", "with", "from", "into", "their",
+    "could", "would", "should", "some", "more", "please", "can", "you",
+    "the", "and", "for", "are", "is", "was", "were"
+}
+
+
 class AssistantService:
+    @staticmethod
+    def check_context_sufficiency(question: str, context: Optional[str]) -> Tuple[bool, List[str]]:
+        """
+        Evaluates whether the attached document context contains substantive overlap
+        with the user's inquiry. Returns (is_sufficient, matched_keywords).
+        """
+        if not context or not context.strip():
+            return False, []
+
+        q_words = [
+            w.lower()
+            for w in re.findall(r'[a-zA-Z]{3,}', question)
+            if w.lower() not in STOPWORDS
+        ]
+        if not q_words:
+            # Query has no content words (e.g., punctuation or symbols)
+            return True, []
+
+        ctx_lower = context.lower()
+        matched = [w for w in q_words if w in ctx_lower]
+        is_sufficient = len(matched) > 0
+        return is_sufficient, matched
+
+    def _extract_relevant_excerpts(self, context: str, keywords: List[str], max_sentences: int = 4) -> str:
+        """
+        Extracts up to max_sentences sentences from context that contain matched keywords.
+        """
+        if not context:
+            return ""
+        sentences = re.split(r'(?<=[.!?])\s+', context.strip())
+        matched_sentences = []
+        for s in sentences:
+            s_clean = s.strip()
+            if not s_clean:
+                continue
+            s_lower = s_clean.lower()
+            if any(k in s_lower for k in keywords):
+                matched_sentences.append(s_clean)
+                if len(matched_sentences) >= max_sentences:
+                    break
+
+        if matched_sentences:
+            return " ".join(matched_sentences)
+        return context.strip()[:500] + "..." if len(context.strip()) > 500 else context.strip()
+
     async def ask_sync(
         self,
         question: str,
@@ -31,30 +93,58 @@ class AssistantService:
         """
         Executes synchronous multi-turn answer generation with contextual grounding.
         """
+        q_clean = question.strip()
+        doc_name = (
+            citations[0].get("doc_title", "uploaded document")
+            if (citations and len(citations) > 0)
+            else "the referenced document"
+        )
+
+        # 1. Inspect Document Context Sufficiency (if document context was attached)
+        if context and context.strip():
+            is_sufficient, matched_kw = self.check_context_sufficiency(q_clean, context)
+            if not is_sufficient:
+                # Explicit Abstention: context is insufficient for this question
+                abstention_msg = (
+                    f"Based on the provided document context in **{doc_name}**, there is insufficient information "
+                    f"to answer your question regarding '{q_clean}'. The referenced excerpts do not contain details "
+                    f"matching this inquiry. Please consult the full document or provide additional study material."
+                )
+                return {
+                    "answer": abstention_msg,
+                    "citations": [],  # Never attach citations to claims not derived from source
+                    "explanation_level": explanation_level,
+                    "language": language
+                }
+
+        # 2. Attempt Live Inference if Provider is Configured
         prompt = self._build_prompt(
-            question=question,
+            question=q_clean,
             context=context,
             conversation_history=conversation_history,
             explanation_level=explanation_level,
             language=language
         )
 
-        llm_response = await llm_provider.generate_with_retry(
-            prompt=prompt,
-            generation_config={"temperature": 0.4, "max_output_tokens": 2048}
-        )
+        if llm_provider.is_configured:
+            try:
+                llm_response = await llm_provider.generate_with_retry(
+                    prompt=prompt,
+                    generation_config={"temperature": 0.4, "max_output_tokens": 2048}
+                )
+                if llm_response and len(llm_response.strip()) > 30:
+                    return {
+                        "answer": llm_response.strip(),
+                        "citations": citations or [] if context else [],
+                        "explanation_level": explanation_level,
+                        "language": language
+                    }
+            except Exception as e:
+                logger.warning(f"Live LLM generation failed ({e}); falling back to honest offline response.")
 
-        if llm_response and len(llm_response.strip()) > 30:
-            return {
-                "answer": llm_response.strip(),
-                "citations": citations or [],
-                "explanation_level": explanation_level,
-                "language": language
-            }
-
-        # Deterministic Grounded Fallback
-        fallback_answer = self._generate_deterministic_answer(
-            question=question,
+        # 3. Honest, Non-Fabricated Fallback
+        fallback_answer, verified_citations = self._generate_honest_fallback(
+            question=q_clean,
             context=context,
             explanation_level=explanation_level,
             language=language,
@@ -63,7 +153,7 @@ class AssistantService:
 
         return {
             "answer": fallback_answer,
-            "citations": citations or [],
+            "citations": verified_citations,
             "explanation_level": explanation_level,
             "language": language
         }
@@ -79,10 +169,33 @@ class AssistantService:
     ) -> AsyncGenerator[str, None]:
         """
         Genuine token-by-token streaming generator.
-        Streams live tokens directly from the LLM provider as they are generated.
+        Streams live tokens from LLM provider or streams verified fallback response.
         """
+        q_clean = question.strip()
+        doc_name = (
+            citations[0].get("doc_title", "uploaded document")
+            if (citations and len(citations) > 0)
+            else "the referenced document"
+        )
+
+        # 1. Document Context Sufficiency Check
+        if context and context.strip():
+            is_sufficient, _ = self.check_context_sufficiency(q_clean, context)
+            if not is_sufficient:
+                abstention_msg = (
+                    f"Based on the provided document context in **{doc_name}**, there is insufficient information "
+                    f"to answer your question regarding '{q_clean}'. The referenced excerpts do not contain details "
+                    f"matching this inquiry. Please consult the full document or provide additional study material."
+                )
+                tokens = re.findall(r'\S+|\s+', abstention_msg)
+                for t in tokens:
+                    yield t
+                    await asyncio.sleep(0.01)
+                return
+
+        # 2. Attempt Live Stream if Provider Configured
         prompt = self._build_prompt(
-            question=question,
+            question=q_clean,
             context=context,
             conversation_history=conversation_history,
             explanation_level=explanation_level,
@@ -101,17 +214,16 @@ class AssistantService:
                 if streamed_any:
                     return
             except Exception as e:
-                logger.warning(f"Live LLM stream error: {e}. Falling back to internal engine.")
+                logger.warning(f"Live LLM stream failed ({e}); streaming honest fallback.")
 
-        # Deterministic Grounded Fallback when provider unconfigured or disconnected
-        fallback_answer = self._generate_deterministic_answer(
-            question=question,
+        # 3. Stream Honest Fallback
+        fallback_answer, _ = self._generate_honest_fallback(
+            question=q_clean,
             context=context,
             explanation_level=explanation_level,
             language=language,
             citations=citations
         )
-        import re
         tokens = re.findall(r'\S+|\s+', fallback_answer)
         for t in tokens:
             yield t
@@ -137,7 +249,6 @@ class AssistantService:
 
         history_block = ""
         if conversation_history:
-            # Maintain 10-message sliding window
             recent = conversation_history[-10:]
             history_lines = []
             for msg in recent:
@@ -169,111 +280,147 @@ class AssistantService:
             f"ASSISTANT RESPONSE:"
         )
 
-    def _generate_deterministic_answer(
+    def _generate_honest_fallback(
         self,
         question: str,
         context: Optional[str],
         explanation_level: str,
         language: str,
         citations: Optional[List[Dict[str, Any]]]
-    ) -> str:
-        lvl = explanation_level.lower()
+    ) -> Tuple[str, List[Dict[str, Any]]]:
+        """
+        Produces an honest, non-fabricated response when the live LLM provider is unavailable.
+        Never generates arbitrary technical claims (e.g. O(log n), CAS, atomicity) on unrelated questions.
+        Never attaches citations unless derived from the actual referenced context.
+        """
         q_clean = question.strip()
+        lvl = explanation_level.lower()
 
-        # Insufficient context check when a document context is provided
+        # CASE 1: Document context is provided and has verified relevant overlap
         if context and context.strip():
-            import re
-            stopwords = {
-                "what", "which", "where", "when", "how", "why", "does", "explain", "describe",
-                "about", "this", "that", "these", "those", "have", "with", "from", "into", "their"
-            }
-            q_words = [w.lower() for w in re.findall(r'[a-zA-Z]{3,}', q_clean) if w.lower() not in stopwords]
-            ctx_lower = context.lower()
-            overlap = [w for w in q_words if w in ctx_lower]
-            if q_words and len(overlap) == 0:
-                doc_name = citations[0].get("doc_title", "uploaded document") if citations else "uploaded document"
-                return (
-                    f"Based on the provided context in **{doc_name}**, there is insufficient information to answer your question regarding '{q_clean}'. "
-                    f"The retrieved excerpts do not contain details matching this query. "
-                    f"Please consult the full document or upload relevant study material covering this specific topic."
+            is_suff, matched_kw = self.check_context_sufficiency(q_clean, context)
+            doc_name = citations[0].get("doc_title", "Document") if citations else "the referenced document"
+            page_num = citations[0].get("page_number", 1) if citations else 1
+
+            mode_tag = ""
+            if lvl == "eli5":
+                mode_tag = " (ELI5 Mode — Simple Summary)"
+            elif lvl == "advanced":
+                mode_tag = " (Advanced Architectural Invariants & Complexity Mode)"
+            elif lvl == "exam_oriented":
+                mode_tag = " (Exam-Oriented Master Notes Mode)"
+
+            if is_suff and matched_kw:
+                excerpts = self._extract_relevant_excerpts(context, matched_kw)
+                text = (
+                    f"### Grounded Document Notes{mode_tag}: {q_clean}\n\n"
+                    f"*The AI model reasoning service is currently operating in offline mode. "
+                    f"The following verified simple excerpts are extracted directly from your study material (**{doc_name}**):*\n\n"
+                    f"> {excerpts}\n\n"
+                    f"*Source: {doc_name} (Page {page_num})*"
                 )
+                return text, citations or []
+            else:
+                abstention = (
+                    f"Based on the provided document context in **{doc_name}**, there is insufficient information "
+                    f"to answer your question regarding '{q_clean}'. The referenced excerpts do not contain details "
+                    f"matching this inquiry. Please consult the full document or provide additional study material."
+                )
+                return abstention, []
 
-        # Handle specific languages
-        if language == "te":
-            return (
-                f"### {q_clean} - సమగ్ర విశ్లేషణ\n\n"
-                f"**ముఖ్య సారాంశం**: కంప్యూటర్ సైన్స్ మరియు సాఫ్ట్‌వేర్ ఇంజనీరింగ్‌లో ఈ కాన్సెప్ట్ అత్యంత కీలకమైనది. "
-                f"ఇది సిస్టమ్ యొక్క ఖచ్చితత్వం, స్థిరత్వం మరియు స్కేలబిలిటీని నిర్ధారిస్తుంది.\n\n"
-                f"#### ముఖ్య సూత్రాలు:\n"
-                f"1. **నిర్మాణ సరళి**: డేటా సమగ్రతను మరియు స్థిరత్వాన్ని కాపాడుతుంది.\n"
-                f"2. **పనితీరు**: అధిక ట్రాఫిక్ ఉన్నప్పుడు కూడా వేగంగా స్పందించేలా రూపొందించబడింది.\n"
-                f"3. **ఆచరణాత్మక ఉపయోగం**: ఆధునిక డేటాబేస్ మరియు క్లౌడ్ ఆర్కిటెక్చర్‌లో విస్తృతంగా ఉపయోగించబడుతుంది."
+        # CASE 2: No document context attached (General Academic Query)
+        # Check multilingual requests
+        has_telugu = (language == "te") or any('\u0c00' <= char <= '\u0c7f' for char in q_clean)
+        has_hindi = (language == "hi") or any('\u0900' <= char <= '\u097f' for char in q_clean)
+
+        if has_telugu:
+            te_msg = (
+                f"### AI స్టడీ అసిస్టెంట్ (ఆఫ్‌లైన్ మోడ్)\n\n"
+                f"AI రీజనింగ్ సర్వీస్ ప్రస్తుతం ఆఫ్‌లైన్‌లో ఉంది (యాక్టివ్ LLM ప్రొవైడర్ కనెక్షన్ అందుబాటులో లేదు).\n\n"
+                f"- **మీ ప్రశ్న**: *{q_clean}*\n\n"
+                f"*ప్రత్యక్ష AI వివరణలను పొందడానికి దయచేసి సిస్టమ్ సెట్టింగ్స్ లో `GEMINI_API_KEY` కాన్ఫిగర్ చేయబడిందో లేదో తనిఖీ చేయండి. "
+                f"ప్రత్యామ్నాయంగా, మీరు డాక్యుమెంట్స్ సెక్షన్‌లో స్టడీ మెటీరియల్ (PDF/DOCX) అప్‌లోడ్ చేసి ప్రశ్నలు అడగవచ్చు.*"
             )
-        elif language == "hi":
-            return (
-                f"### {q_clean} - विस्तृत शैक्षणिक विश्लेषण\n\n"
-                f"**मुख्य अवधारणा**: कंप्यूटर विज्ञान में यह सिद्धांत अत्यंत महत्वपूर्ण है। "
-                f"यह प्रणालियों की सत्यनिष्ठा (integrity), संगति (consistency) और मापनीयता (scalability) सुनिश्चित करता है।\n\n"
-                f"#### मुख्य सिद्धांत:\n"
-                f"1. **संरचनात्मक सुरक्षा**: अनपेक्षित विसंगतियों को रोकता है।\n"
-                f"2. **दक्षता एवं प्रदर्शन**: जटिल कम्प्यूटेशनल प्रक्रियाओं को सरल और व्यवस्थित बनाता है।\n"
-                f"3. **व्यावहारिक उपयोग**: आधुनिक क्लाउड और डेटाबेस आर्किटेक्चर में व्यापक रूप से प्रयुक्त।"
+            return te_msg, []
+
+        if has_hindi:
+            hi_msg = (
+                f"### AI अध्ययन सहायक (ऑफ़लाइन मोड)\n\n"
+                f"AI रीजनिंग सेवा वर्तमान में ऑफ़लाइन है (सक्रिय LLM प्रदाता कनेक्शन उपलब्ध नहीं है)।\n\n"
+                f"- **आपका प्रश्न**: *{q_clean}*\n\n"
+                f"*सीधे AI स्पष्टीकरण प्राप्त करने के लिए कृपया सुनिश्चित करें कि आपके पर्यावरण में मान्य `GEMINI_API_KEY` कॉन्फ़िगर है। "
+                f"वैकल्पिक रूप से, आप दस्तावेज़ अनुभाग में अध्ययन सामग्री (PDF/DOCX) अपलोड करके सीधे संदर्भ सामग्री से प्रश्न पूछ सकते हैं।*"
             )
+            return hi_msg, []
 
-        citation_note = ""
-        if citations:
-            c = citations[0]
-            citation_note = f"\n\n*Source Citation: Grounded in '{c.get('doc_title', 'Course Material')}' (Page {c.get('page_number', 1)})*"
-
+        # English / General responses tailored to requested level without fabricating facts
         if lvl == "eli5":
-            return (
-                f"### Simple ELI5 Explanation: {q_clean}\n\n"
-                f"Think of it like an organized library or toy box! When everything is sorted into labeled bins, "
-                f"finding any toy takes just one second instead of turning the entire room upside down.\n\n"
-                f"In computer terms, {q_clean} does exactly that: it sets up simple, tidy rules so the computer "
-                f"never gets confused, never loses your data, and always knows where everything belongs.{citation_note}"
+            eli5_msg = (
+                f"### AI Study Assistant (Offline Fallback — ELI5 Mode)\n\n"
+                f"The AI reasoning engine is currently running in offline mode because an active AI provider "
+                f"(such as Google Gemini) is not configured or reached.\n\n"
+                f"- **Question**: *{q_clean}*\n"
+                f"- **Requested Mode**: Simple ELI5 (Explain Like I'm 5)\n\n"
+                f"*To receive live AI-generated simple explanations, please configure `GEMINI_API_KEY` in your environment settings. "
+                f"You can also upload a reference document (PDF/DOCX) in the Documents section to ground answers directly in your study material.*"
             )
+            return eli5_msg, []
+
         elif lvl == "advanced":
-            return (
-                f"### Advanced Architectural Deep Dive: {q_clean}\n\n"
-                f"#### Theoretical Foundations & State Invariants\n"
-                f"From an asymptotic complexity and systems architecture standpoint, **{q_clean}** provides "
-                f"strict invariants over computational state transitions:\n\n"
-                f"```text\n"
-                f"State S_0 --[ Validated Transition T ]--> State S_1 (Invariants Preserved)\n"
-                f"```\n\n"
-                f"#### Formal Guarantees & Constraints:\n"
-                f"- **Computational Complexity**: Achieves optimal logarithmic $O(\\log n)$ bounds or constant amortized $O(1)$ lookup guarantees.\n"
-                f"- **Concurrency & Memory Model**: Operates without partial race conditions by enforcing atomic compare-and-swap (CAS) primitives and barrier synchronization.\n"
-                f"- **Failure Boundaries**: Implements idempotency guarantees ensuring node failure triggers immediate rollback to the latest durable checkpoint.{citation_note}"
+            adv_msg = (
+                f"### AI Study Assistant (Offline Fallback — Advanced Mode)\n\n"
+                f"The AI reasoning engine is currently running in offline mode because an active AI provider "
+                f"(such as Google Gemini) is not configured or reached.\n\n"
+                f"- **Inquiry**: *{q_clean}*\n"
+                f"- **Requested Depth**: Advanced Architectural Analysis & Complexity Bounds\n\n"
+                f"*To analyze theoretical complexity bounds and advanced system invariants with live AI inference, "
+                f"please ensure a valid `GEMINI_API_KEY` is configured in your environment. Alternatively, upload academic "
+                f"papers or lecture slides in Documents for verifiable retrieval.*"
             )
+            return adv_msg, []
+
         elif lvl == "exam_oriented":
-            return (
-                f"### University Exam Master Notes: {q_clean}\n\n"
-                f"#### 1. Standard 2-Mark Definition\n"
-                f"> **{q_clean}** is formally defined as the computational mechanism and design paradigm that ensures relational integrity, operational deterministic consistency, and fault tolerance across software modules.\n\n"
-                f"#### 2. Key Operational Mechanisms (5-Mark Answer)\n"
-                f"- **Mechanism 1 (Invariant Validation)**: Verifies input constraints prior to state mutation.\n"
-                f"- **Mechanism 2 (Idempotent Execution)**: Re-executing identical requests yields identical state.\n"
-                f"- **Mechanism 3 (Failure Recovery)**: Uses transaction logs for point-in-time recovery.\n\n"
-                f"#### 3. Examination High-Scoring Tips\n"
-                f"- Always include asymptotic Big-O runtime and auxiliary memory notations.\n"
-                f"- State the trade-offs between space complexity and throughput in your comparison table.{citation_note}"
+            exam_msg = (
+                f"### AI Study Assistant (Offline Fallback — Exam-Oriented Mode)\n\n"
+                f"The AI reasoning engine is currently running in offline mode because an active AI provider "
+                f"(such as Google Gemini) is not configured or reached.\n\n"
+                f"- **Inquiry**: *{q_clean}*\n"
+                f"- **Target**: Examination Master Notes & Marking Rubrics\n\n"
+                f"*To generate structured 2-mark definitions, operational mechanisms, and exam notes, "
+                f"please configure a valid `GEMINI_API_KEY` in your environment settings.*"
             )
+            return exam_msg, []
+
         else:
-            return (
-                f"### Overview & Analysis: {q_clean}\n\n"
-                f"Here is a comprehensive, multi-dimensional breakdown of **{q_clean}**:\n\n"
-                f"#### 1. Core Architectural Concept\n"
-                f"At its foundation, {q_clean} establishes the rules and structures that govern state consistency and computational efficiency. "
-                f"It ensures predictable operations while minimizing resource overhead.\n\n"
-                f"#### 2. Technical Mechanics & Workflow\n"
-                f"- **Input Processing**: Requests are validated against formal structural schemas.\n"
-                f"- **State Coordination**: System invariants prevent race conditions and partial commits.\n"
-                f"- **Reliability Guarantees**: Errors are caught and handled through robust recovery boundaries.\n\n"
-                f"#### 3. Real-World Engineering Context\n"
-                f"In production systems, this pattern is fundamental to achieving high reliability, low-latency execution, "
-                f"and zero data loss under peak enterprise workloads.{citation_note}"
+            default_msg = (
+                f"### AI Study Assistant (Offline Fallback)\n\n"
+                f"The AI reasoning engine is currently running in offline mode because an active AI provider "
+                f"(such as Google Gemini) is not connected or reachable.\n\n"
+                f"- **Topic**: *{q_clean}*\n"
+                f"- **Explanation Level**: {explanation_level.capitalize()}\n\n"
+                f"*To unlock real-time contextual explanations, please set a valid `GEMINI_API_KEY` in your environment settings. "
+                f"If you upload a course document in the Documents section, EduPath AI can search and extract verified concepts "
+                f"directly from your notes.*"
             )
+            return default_msg, []
+
+    def _generate_deterministic_answer(
+        self,
+        question: str,
+        context: Optional[str] = None,
+        explanation_level: str = "intermediate",
+        language: str = "auto",
+        citations: Optional[List[Dict[str, Any]]] = None
+    ) -> str:
+        """Backward compatible alias for honest fallback generation."""
+        text, _ = self._generate_honest_fallback(
+            question=question,
+            context=context,
+            explanation_level=explanation_level,
+            language=language,
+            citations=citations
+        )
+        return text
+
 
 assistant_service = AssistantService()

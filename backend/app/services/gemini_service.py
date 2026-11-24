@@ -97,7 +97,7 @@ class GeminiService:
         )
         return {
             "answer": res["answer"],
-            "citations": parsed_citations if (context_chunks or citations) else []
+            "citations": res.get("citations", [])
         }
 
     async def stream_chat_response(

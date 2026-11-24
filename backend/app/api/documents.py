@@ -216,9 +216,11 @@ async def delete_document(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found or access denied.")
 
-    if os.path.exists(doc.file_path):
+    real_upload_dir = os.path.realpath(settings.UPLOAD_DIR)
+    real_file_path = os.path.realpath(doc.file_path)
+    if real_file_path.startswith(real_upload_dir) and os.path.exists(real_file_path):
         try:
-            os.remove(doc.file_path)
+            os.remove(real_file_path)
         except Exception:
             pass
 

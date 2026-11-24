@@ -1,8 +1,11 @@
 import asyncio
 import os
+import sys
 import json
 import httpx
 import fitz  # PyMuPDF
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 BASE_URL = "http://127.0.0.1:8000"
 
@@ -13,7 +16,22 @@ async def deep_audit():
 
     results = {}
 
-    async with httpx.AsyncClient(base_url=BASE_URL, timeout=40.0) as client:
+    try:
+        async with httpx.AsyncClient(base_url=BASE_URL, timeout=1.0) as check_client:
+            await check_client.get("/health")
+            use_asgi = False
+    except Exception:
+        use_asgi = True
+
+    if use_asgi:
+        from app.main import app
+        from httpx import ASGITransport
+        transport = ASGITransport(app=app)
+        client_ctx = httpx.AsyncClient(transport=transport, base_url="http://test", timeout=40.0)
+    else:
+        client_ctx = httpx.AsyncClient(base_url=BASE_URL, timeout=40.0)
+
+    async with client_ctx as client:
         # Auth Preparation
         print("\n[INIT] Authenticating Test Session...")
         login_res = await client.get("/api/auth/demo-login")

@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app.core.database import get_db, AsyncSessionLocal
 from app.api.deps import get_current_user
+from app.core.security import check_ai_rate_limit
 from app.models.models import User, Conversation, ChatMessage, Document
 from app.schemas.schemas import (
     ChatMessageResponse, CitationItem,
@@ -58,7 +59,8 @@ async def configure_api_key(
 async def ask_study_assistant(
     req: AssistantAskRequest,
     current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_db)
+    session: AsyncSession = Depends(get_db),
+    _rate: None = Depends(check_ai_rate_limit)
 ):
     question = req.question.strip()
     if not question:
@@ -188,7 +190,8 @@ async def chat_stream_assistant(
     request: Request,
     req: AssistantAskRequest,
     current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_db)
+    session: AsyncSession = Depends(get_db),
+    _rate: None = Depends(check_ai_rate_limit)
 ):
     """
     Real-time response streaming endpoint for ChatGPT-like conversational interaction.
@@ -330,7 +333,8 @@ async def chat_stream_assistant(
 async def regenerate_assistant_response(
     req: AssistantRegenerateRequest,
     current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_db)
+    session: AsyncSession = Depends(get_db),
+    _rate: None = Depends(check_ai_rate_limit)
 ):
     stmt = select(Conversation).where(
         Conversation.id == req.conversation_id,
@@ -430,7 +434,8 @@ async def regenerate_assistant_response(
 @router.post("/evaluate-answer", response_model=AnswerEvaluationResponse)
 async def evaluate_user_answer(
     req: AnswerEvaluationRequest,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    _rate: None = Depends(check_ai_rate_limit)
 ):
     """
     Evaluates the quality, accuracy, relevance, and completeness of an answer

@@ -11,6 +11,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.database import get_db
 from app.api.deps import get_current_user
+from app.core.security import check_ai_rate_limit
 from app.models.models import User, Document, DocumentChunk
 from app.schemas.schemas import DocumentResponse
 from app.services.document_parser import DocumentParserService
@@ -245,7 +246,8 @@ async def download_document(
 async def get_document_summary(
     document_id: str,
     current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_db)
+    session: AsyncSession = Depends(get_db),
+    _rate: None = Depends(check_ai_rate_limit)
 ):
     """
     Generates an executive summary and chapter takeaways from the document (Upgrade 4).
@@ -259,7 +261,8 @@ async def get_document_summary(
 async def get_document_concepts(
     document_id: str,
     current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_db)
+    session: AsyncSession = Depends(get_db),
+    _rate: None = Depends(check_ai_rate_limit)
 ):
     """
     Extracts key technical concepts and definitions from document notes (Upgrade 4).
@@ -274,7 +277,8 @@ async def generate_document_questions(
     document_id: str,
     count: int = 5,
     current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_db)
+    session: AsyncSession = Depends(get_db),
+    _rate: None = Depends(check_ai_rate_limit)
 ):
     """
     Generates self-assessment questions grounded directly in the uploaded document (Upgrade 4).
@@ -318,7 +322,8 @@ async def ask_document_content(
     document_id: str,
     req: DocumentAskRequest,
     current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_db)
+    session: AsyncSession = Depends(get_db),
+    _rate: None = Depends(check_ai_rate_limit)
 ):
     """
     Asks questions grounded strictly in the document content with exact page references.
@@ -338,7 +343,8 @@ async def ask_document_content(
 async def get_document_study_notes(
     document_id: str,
     current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_db)
+    session: AsyncSession = Depends(get_db),
+    _rate: None = Depends(check_ai_rate_limit)
 ):
     """
     Generates detailed, structured study notes module-by-module.
@@ -352,7 +358,8 @@ async def get_document_study_notes(
 async def get_document_exam_prep(
     document_id: str,
     current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_db)
+    session: AsyncSession = Depends(get_db),
+    _rate: None = Depends(check_ai_rate_limit)
 ):
     """
     Generates high-yield exam questions with model answers, marks, and scoring criteria.

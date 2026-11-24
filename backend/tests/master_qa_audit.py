@@ -5,6 +5,8 @@ import sys
 import time
 import httpx
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
@@ -28,7 +30,22 @@ async def run_master_qa_audit():
         symbol = "✓" if status == "PASS" else "✗"
         print(f"  {symbol} [{test_id}] {scenario}: {status} {details}")
 
-    async with httpx.AsyncClient(base_url=BASE_URL, timeout=45.0) as client:
+    try:
+        async with httpx.AsyncClient(base_url=BASE_URL, timeout=1.0) as check_client:
+            await check_client.get("/health")
+            use_asgi = False
+    except Exception:
+        use_asgi = True
+
+    if use_asgi:
+        from app.main import app
+        from httpx import ASGITransport
+        transport = ASGITransport(app=app)
+        client_ctx = httpx.AsyncClient(transport=transport, base_url="http://test", timeout=45.0)
+    else:
+        client_ctx = httpx.AsyncClient(base_url=BASE_URL, timeout=45.0)
+
+    async with client_ctx as client:
         # ---------------------------------------------------------
         # SECTION 1: AUTHENTICATION & SESSION SECURITY
         # ---------------------------------------------------------

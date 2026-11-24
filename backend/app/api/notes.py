@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.database import get_db
 from app.api.deps import get_current_user
+from app.core.security import check_ai_rate_limit
 from app.models.models import User, Note, Document, Topic
 from app.schemas.schemas import NoteCreate, NoteUpdate, NoteResponse, NoteGenerateRequest
 from app.services.gemini_service import gemini_service
@@ -14,7 +15,8 @@ router = APIRouter(prefix="/notes", tags=["Smart Notes"])
 async def generate_smart_notes(
     req: NoteGenerateRequest,
     current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_db)
+    session: AsyncSession = Depends(get_db),
+    _rate: None = Depends(check_ai_rate_limit)
 ):
     source_text = ""
     topic_name = req.topic_name or "Academic Concept"

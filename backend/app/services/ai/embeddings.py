@@ -10,7 +10,7 @@ import hashlib
 import logging
 import re
 from collections import defaultdict
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import google.generativeai as genai
 from app.services.ai.provider import llm_provider
 
@@ -210,32 +210,93 @@ class EmbeddingService:
         """
         return self.embed_document(text)
 
+    def embed_document_with_metadata(self, text: str) -> Tuple[List[float], Dict[str, Any]]:
+        """
+        Generates document-level embedding and returns both vector and verified provider metadata.
+        Guarantees that metadata accurately reflects whether semantic or lexical fallback was executed.
+        """
+        if not text or not text.strip():
+            fallback_vec = [0.0] * self.dimension
+            return fallback_vec, {
+                "model_name": self.fallback_provider.model_name,
+                "version": self.version,
+                "dimension": self.dimension,
+                "is_semantic": False,
+                "provider": "LexicalFallbackEmbeddingProvider"
+            }
+
+        if llm_provider.is_configured:
+            try:
+                emb = self.gemini_provider.embed_document(text)
+                if emb and len(emb) == self.dimension:
+                    return emb, {
+                        "model_name": self.gemini_provider.model_name,
+                        "version": self.version,
+                        "dimension": self.dimension,
+                        "is_semantic": True,
+                        "provider": "GeminiEmbeddingProvider"
+                    }
+            except Exception as e:
+                logger.warning(f"Semantic document embedding failed: {e}. Executing transparent fallback.")
+
+        emb = self.fallback_provider.embed_document(text)
+        return emb, {
+            "model_name": self.fallback_provider.model_name,
+            "version": self.version,
+            "dimension": self.dimension,
+            "is_semantic": False,
+            "provider": "LexicalFallbackEmbeddingProvider"
+        }
+
+    def embed_query_with_metadata(self, text: str) -> Tuple[List[float], Dict[str, Any]]:
+        """
+        Generates query-level embedding and returns both vector and verified provider metadata.
+        """
+        if not text or not text.strip():
+            fallback_vec = [0.0] * self.dimension
+            return fallback_vec, {
+                "model_name": self.fallback_provider.model_name,
+                "version": self.version,
+                "dimension": self.dimension,
+                "is_semantic": False,
+                "provider": "LexicalFallbackEmbeddingProvider"
+            }
+
+        if llm_provider.is_configured:
+            try:
+                emb = self.gemini_provider.embed_query(text)
+                if emb and len(emb) == self.dimension:
+                    return emb, {
+                        "model_name": self.gemini_provider.model_name,
+                        "version": self.version,
+                        "dimension": self.dimension,
+                        "is_semantic": True,
+                        "provider": "GeminiEmbeddingProvider"
+                    }
+            except Exception as e:
+                logger.warning(f"Semantic query embedding failed: {e}. Executing transparent fallback.")
+
+        emb = self.fallback_provider.embed_query(text)
+        return emb, {
+            "model_name": self.fallback_provider.model_name,
+            "version": self.version,
+            "dimension": self.dimension,
+            "is_semantic": False,
+            "provider": "LexicalFallbackEmbeddingProvider"
+        }
+
     def embed_document(self, text: str) -> List[float]:
         """
         Generates document-level embedding with retrieval_document task tuning.
         """
-        if not text or not text.strip():
-            return [0.0] * self.dimension
-
-        if llm_provider.is_configured:
-            emb = self.gemini_provider.embed_document(text)
-            if emb and len(emb) == self.dimension:
-                return emb
-
-        return self.fallback_provider.embed_document(text)
+        vec, _ = self.embed_document_with_metadata(text)
+        return vec
 
     def embed_query(self, text: str) -> List[float]:
         """
         Generates query-level embedding with retrieval_query task tuning.
         """
-        if not text or not text.strip():
-            return [0.0] * self.dimension
-
-        if llm_provider.is_configured:
-            emb = self.gemini_provider.embed_query(text)
-            if emb and len(emb) == self.dimension:
-                return emb
-
-        return self.fallback_provider.embed_query(text)
+        vec, _ = self.embed_query_with_metadata(text)
+        return vec
 
 embedding_service = EmbeddingService()

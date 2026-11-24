@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.database import get_db
+from app.core.config import settings
 from app.core.security import (
     verify_password, get_password_hash, create_access_token,
     validate_password_strength, check_auth_rate_limit
@@ -66,9 +67,15 @@ async def login_user(login_data: UserLogin, session: AsyncSession = Depends(get_
         user=UserResponse.model_validate(user)
     )
 
-@router.get("/demo-login", response_model=TokenResponse)
-@router.post("/demo-login", response_model=TokenResponse)
+@router.get("/demo-login", response_model=TokenResponse, dependencies=[Depends(check_auth_rate_limit)])
+@router.post("/demo-login", response_model=TokenResponse, dependencies=[Depends(check_auth_rate_limit)])
 async def demo_login(session: AsyncSession = Depends(get_db)):
+    if settings.ENVIRONMENT in ("production", "prod") and not settings.ALLOW_DEMO_LOGIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Demo account authentication is strictly disabled in production environments."
+        )
+
     stmt = select(User).where(User.email == "demo@edupath.ai")
     res = await session.execute(stmt)
     demo_user = res.scalar_one_or_none()

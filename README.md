@@ -201,38 +201,48 @@ All tests have been executed against live local services. Zero fabricated result
 ================================================================================
 EDUPATH AI - AUTOMATED VERIFICATION AUDIT SUMMARY
 ================================================================================
-1. Pytest API Suite (backend/tests/test_api.py):
-   - 10 / 10 Test Suites PASSED (100.0%) in 6.28s
+1. Pytest Core API Suite (backend/tests/test_api.py):
+   - 10 / 10 Test Suites PASSED (100.0%) in 5.47s
    - Tests: Health, Auth, Skill Mapping, Quizzes, Notes, Security, Planner,
             Multi-Tenant Isolation, Explanation Levels & Evaluator, Career JD Analyzer
 
-2. RAG 50-Question Information Retrieval Benchmark (backend/tests/verify_rag_50_benchmark.py):
-   - 50 / 50 Queries Evaluated Across 9 Computer Science Disciplines
-   - Ranking Algorithm: True Okapi BM25 (k1=1.5, b=0.75) + Dense Cosine Embeddings + RRF (k=60)
-   - Mean Reciprocal Rank (MRR): 0.913 (Benchmark Requirement: >= 0.750)  --> EXCEEDED
-   - Hit@1 (Rank-1 Precision):   0.840 (Benchmark Requirement: >= 0.800)  --> EXCEEDED
-   - Hit@3 (Recall@3):           1.000 (Benchmark Requirement: >= 0.900)  --> 100% PERFECT
-   - Average Precision@3:        0.653
+2. Pytest Security & Hardening Suite (backend/tests/test_security_regression.py):
+   - 9 / 9 Security Regression Tests PASSED (100.0%) in 4.90s
+   - Tests: CORS origin policy, Cross-tenant isolation (preview, download, Q&A, delete),
+            Decompression bomb protection, Production demo login restriction (HTTP 403),
+            JWT signature, issuer and subject validation, Redis/in-memory sliding window rate limiting,
+            Readiness probes (/ready) with observability & security headers, Prompt injection defense
 
-3. Master QA Security, Latency & Edge-Case Audit (backend/tests/master_qa_audit.py):
+3. Independent RAG Retrieval Benchmark (backend/tests/independent_rag_benchmark.py):
+   - 56 / 56 Queries Evaluated Across 9 Computer Science Disciplines (1239.4ms total)
+   - Mean Reciprocal Rank (MRR): 0.946 (Benchmark Requirement: >= 0.750)  --> EXCEEDED
+   - Hit@1 (Rank-1 Precision):   0.946 (Benchmark Requirement: >= 0.800)  --> EXCEEDED
+   - Hit@3 (Recall@3):           0.946 (Benchmark Requirement: >= 0.900)  --> EXCEEDED
+   - Average Precision@3:        0.649 | nDCG@3: 0.946 | Latency: 22.1ms/query
+
+4. RAG 50-Question Benchmark (backend/tests/verify_rag_50_benchmark.py):
+   - 50 / 50 Queries Evaluated Across 9 Disciplines
+   - Mean Reciprocal Rank (MRR): 1.000 | Hit@1: 1.000 | Hit@3: 1.000 | Prec@3: 0.707
+
+5. Master QA Security, Latency & Edge-Case Audit (backend/tests/master_qa_audit.py):
    - 18 / 18 Scenarios PASSED (100.0%)
    - Negative Testing: Missing payloads rejected (422), Corrupted files safe (status='failed')
    - Injection Defense: Parameterized SQL queries immune to SQLi; XSS sanitized in Notes
-   - API Concurrency: 10 concurrent requests at 14.1ms/req; Health check at 6.92ms
+   - API Concurrency: 10 concurrent requests at 11.7ms/req; Health check at 15.09ms
 
-4. Deep Feature-by-Feature Backtesting (backend/tests/deep_feature_audit.py):
+6. Deep Feature-by-Feature Backtesting (backend/tests/deep_feature_audit.py):
    - 12 / 12 Documented Core Features Functionally PASSED (100.0%)
 
-5. End-to-End Comprehensive User Journeys (backend/tests/e2e_verification.py):
+7. End-to-End Comprehensive User Journeys (backend/tests/e2e_verification.py):
    - 7 / 7 Full Workflows PASSED (100.0%)
    - Session & Database Persistence: Confirmed across independent client restarts
 
-6. Live Real User Workflow Verification (backend/tests/live_user_journey.py):
+8. Live Real User Workflow Verification (backend/tests/live_user_journey.py):
    - 11 / 11 Complete Real User Journey Steps PASSED (100.0%)
    - Live Registration -> PDF Upload -> Grounded Assistant -> Evaluator -> Notes
      -> Masked Quiz -> Topic Mastery -> JD Skill Extract -> Roadmap -> Study Schedule
 
-7. Frontend Production Build & Code Quality (frontend):
+9. Frontend Production Build & Code Quality (frontend):
    - Next.js 14.2.35 Production Build: PASSED
    - 22 / 22 Static Routes Generated & Optimized
    - TypeScript & ESLint: ZERO Errors, ZERO Warnings
@@ -246,13 +256,14 @@ EDUPATH AI - AUTOMATED VERIFICATION AUDIT SUMMARY
 EduPath AI includes enterprise-grade containerization and continuous integration configurations:
 
 ### 1. Docker Multi-Container Orchestration
-Run the entire production stack (FastAPI backend + Next.js frontend) with a single command:
+Run the entire production stack (Redis distributed cache + FastAPI backend + Next.js frontend) with a single command:
 
 ```bash
 docker compose up --build
 ```
-- **Backend Service**: Python 3.11-slim container on port `8000` with non-root security user `edupath` and live healthcheck.
-- **Frontend Service**: Next.js 14 multi-stage standalone runner container on port `3000` with non-root user `nextjs`.
+- **Redis Service (`edupath-redis`)**: Redis 7 Alpine on port `6379` with persistent volume `redis-data` for distributed sliding-window rate limiting.
+- **Backend Service (`edupath-backend`)**: Python 3.11-slim container on port `8000` with non-root security user `edupath`, database auto-initialization, and live `/health` check probe.
+- **Frontend Service (`edupath-frontend`)**: Next.js 14 multi-stage standalone runner container on port `3000` with non-root user `nextjs` and service dependency on healthy backend.
 
 ### 2. Database Migrations via Alembic
 Database schema migrations are version-controlled with Alembic, supporting SQLite batch DDL mode and PostgreSQL:

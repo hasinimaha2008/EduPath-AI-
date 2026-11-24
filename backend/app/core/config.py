@@ -32,10 +32,15 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
     
-    # Rate Limiting
+    # Demo Account Security
+    ALLOW_DEMO_LOGIN: bool = os.getenv("ALLOW_DEMO_LOGIN", "false").lower() in ("true", "1", "yes") if os.getenv("ENVIRONMENT", "development").lower() in ("production", "prod") else True
+
+    # Rate Limiting & Distributed Redis
     RATE_LIMIT_ENABLED: bool = True
-    AUTH_RATE_LIMIT_PER_MINUTE: int = 30
-    
+    AUTH_RATE_LIMIT_PER_MINUTE: int = int(os.getenv("AUTH_RATE_LIMIT_PER_MINUTE", "30"))
+    AI_RATE_LIMIT_PER_MINUTE: int = int(os.getenv("AI_RATE_LIMIT_PER_MINUTE", "20"))
+    REDIS_URL: str = os.getenv("REDIS_URL", "")
+
     # CORS
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",
@@ -44,9 +49,10 @@ class Settings(BaseSettings):
         "http://127.0.0.1:8000",
     ]
     
-    # Uploads
+    # Uploads & Request Limits
     UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", DEFAULT_UPLOAD_DIR)
     MAX_UPLOAD_SIZE_BYTES: int = 25 * 1024 * 1024  # 25 MB
+    MAX_REQUEST_BODY_BYTES: int = 30 * 1024 * 1024  # 30 MB
 
     model_config = SettingsConfigDict(
         env_file=os.path.join(BACKEND_DIR, ".env"),

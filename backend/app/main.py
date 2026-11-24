@@ -1,3 +1,5 @@
+import time
+import uuid
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
@@ -41,6 +43,8 @@ async def lifespan(app: FastAPI):
         logger.info("EduPath AI Database & Taxonomy ready.")
     except Exception as e:
         logger.error(f"Error initializing database: {e}")
+        if settings.ENVIRONMENT.lower() in ("production", "prod"):
+            raise
     yield
     logger.info("Shutting down EduPath AI services...")
 
@@ -57,8 +61,41 @@ app.add_middleware(
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With", "X-Request-ID"],
 )
+
+@app.middleware("http")
+async def security_and_observability_middleware(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    request.state.request_id = request_id
+
+    # Check payload size limit
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > settings.MAX_REQUEST_BODY_BYTES:
+                return JSONResponse(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    content={"detail": "Payload too large. Maximum permitted request body is 30MB."}
+                )
+        except ValueError:
+            pass
+
+    start_time = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = (time.perf_counter() - start_time) * 1000.0
+
+    # Attach observability headers
+    response.headers["X-Request-ID"] = request_id
+    response.headers["X-Process-Time"] = f"{duration_ms:.2f}ms"
+
+    # Attach security hardening headers
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+
+    return response
 
 # Exception handler for unhandled errors
 @app.exception_handler(Exception)
@@ -132,6 +169,48 @@ async def health_check():
         "service": "EduPath AI Backend Engine",
         "database": db_status,
         "storage": "writable" if storage_writable else "read-only",
+        "environment": settings.ENVIRONMENT,
+        "version": settings.VERSION
+    }
+
+@app.get("/ready")
+@app.get("/api/ready")
+async def readiness_probe():
+    """
+    Readiness probe verifying DB query responsiveness and storage write permissions.
+    """
+    try:
+        async with AsyncSessionLocal() as session:
+            await session.execute(text("SELECT 1"))
+    except Exception as e:
+        logger.error(f"Readiness probe failed on database connection: {e}")
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "status": "not_ready",
+                "service": "EduPath AI Backend Engine",
+                "database": f"error: {str(e)}",
+                "version": settings.VERSION
+            }
+        )
+
+    storage_writable = os.access(settings.UPLOAD_DIR, os.W_OK) if os.path.exists(settings.UPLOAD_DIR) else True
+    if not storage_writable:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "status": "not_ready",
+                "service": "EduPath AI Backend Engine",
+                "storage": "directory not writable",
+                "version": settings.VERSION
+            }
+        )
+
+    return {
+        "status": "ready",
+        "service": "EduPath AI Backend Engine",
+        "database": "ready",
+        "storage": "ready",
         "environment": settings.ENVIRONMENT,
         "version": settings.VERSION
     }

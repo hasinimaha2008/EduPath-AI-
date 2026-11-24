@@ -1,6 +1,20 @@
 version: "3.8"
 
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: edupath-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
   backend:
     build:
       context: ./backend
@@ -13,10 +27,15 @@ services:
       - ENVIRONMENT=${ENVIRONMENT:-production}
       - PORT=${PORT:-8000}
       - DATABASE_URL=${DATABASE_URL:-sqlite+aiosqlite:////app/edupath.db}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - ALLOW_DEMO_LOGIN=${ALLOW_DEMO_LOGIN:-false}
       - JWT_SECRET=${JWT_SECRET:?Mandatory JWT_SECRET environment variable is missing for production deployment}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       - UPLOAD_DIR=/app/uploads
+    depends_on:
+      redis:
+        condition: service_healthy
     volumes:
       - backend-uploads:/app/uploads
       - backend-db:/app
@@ -51,3 +70,4 @@ services:
 volumes:
   backend-uploads:
   backend-db:
+  redis-data:

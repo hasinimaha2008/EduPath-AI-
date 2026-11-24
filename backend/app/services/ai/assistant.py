@@ -12,7 +12,8 @@ from app.services.ai.provider import llm_provider
 from app.services.ai.prompts import (
     GENERAL_PURPOSE_SYSTEM_PROMPT,
     EXPLANATION_LEVEL_PROMPTS,
-    MULTILINGUAL_INSTRUCTIONS
+    MULTILINGUAL_INSTRUCTIONS,
+    PROMPT_INJECTION_DEFENSE_DIRECTIVE
 )
 
 logger = logging.getLogger("edupath.ai.assistant")
@@ -147,7 +148,10 @@ class AssistantService:
 
         context_block = ""
         if context and context.strip():
-            context_block = f"GROUNDED REFERENCE KNOWLEDGE:\n{context.strip()[:3000]}\n\n"
+            context_block = (
+                f"{PROMPT_INJECTION_DEFENSE_DIRECTIVE}\n\n"
+                f"<document_context>\n{context.strip()[:4000]}\n</document_context>\n\n"
+            )
 
         return (
             f"{GENERAL_PURPOSE_SYSTEM_PROMPT}\n\n"
@@ -155,7 +159,7 @@ class AssistantService:
             f"LANGUAGE DIRECTIVE: {lang_instruction}\n\n"
             f"{context_block}"
             f"{history_block}"
-            f"CURRENT STUDENT QUERY:\n{question}\n\n"
+            f"<user_query>\n{question}\n</user_query>\n\n"
             f"ASSISTANT RESPONSE:"
         )
 

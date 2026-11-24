@@ -98,15 +98,15 @@ class RAGService:
     @staticmethod
     async def index_chunks(session: AsyncSession, chunks: List[DocumentChunk]):
         """
-        Generates and saves embeddings for document chunks with versioned metadata.
+        Generates and saves embeddings for document chunks with verified provider metadata.
+        Guarantees that stored model_name accurately reflects the generating provider.
         """
-        metadata = gemini_service.embeddings.get_metadata()
         for chunk in chunks:
-            embedding = gemini_service.embeddings.embed_document(chunk.content)
+            embedding, meta = gemini_service.embeddings.embed_document_with_metadata(chunk.content)
             doc_embedding = DocumentEmbedding(
                 chunk_id=chunk.id,
                 embedding_json=json.dumps(embedding),
-                model_name=metadata["model_name"]
+                model_name=meta["model_name"]
             )
             session.add(doc_embedding)
         await session.commit()
@@ -117,7 +117,6 @@ class RAGService:
         Re-indexes all document chunks belonging to user using active embedding model.
         Supports seamless embedding model upgrades and metadata versioning.
         """
-        metadata = gemini_service.embeddings.get_metadata()
         stmt = (
             select(DocumentChunk)
             .join(Document, DocumentChunk.document_id == Document.id)
@@ -126,24 +125,26 @@ class RAGService:
         res = await session.execute(stmt)
         chunks = res.scalars().all()
         reindexed_count = 0
+        last_meta = gemini_service.embeddings.get_metadata()
         for chunk in chunks:
-            emb = gemini_service.embeddings.embed_document(chunk.content)
+            emb, meta = gemini_service.embeddings.embed_document_with_metadata(chunk.content)
+            last_meta = meta
             emb_stmt = select(DocumentEmbedding).where(DocumentEmbedding.chunk_id == chunk.id)
             emb_obj = (await session.execute(emb_stmt)).scalar_one_or_none()
             if emb_obj:
                 emb_obj.embedding_json = json.dumps(emb)
-                emb_obj.model_name = metadata["model_name"]
+                emb_obj.model_name = meta["model_name"]
             else:
                 session.add(DocumentEmbedding(
                     chunk_id=chunk.id,
                     embedding_json=json.dumps(emb),
-                    model_name=metadata["model_name"]
+                    model_name=meta["model_name"]
                 ))
             reindexed_count += 1
         await session.commit()
         return {
             "reindexed_chunks": reindexed_count,
-            "embedding_metadata": metadata
+            "embedding_metadata": last_meta
         }
 
     @staticmethod
@@ -197,7 +198,10 @@ class RAGService:
         for idx, (chunk_id, content, page_num, doc_id, doc_title, emb_json) in enumerate(rows):
             try:
                 emb_vec = json.loads(emb_json)
-                dense_score = max(0.0, cosine_similarity(query_vector, emb_vec))
+                if not isinstance(emb_vec, list) or len(emb_vec) != len(query_vector):
+                    dense_score = 0.0
+                else:
+                    dense_score = max(0.0, cosine_similarity(query_vector, emb_vec))
                 lexical_score = bm25_scorer.score_document(query, idx) if bm25_scorer else 0.0
 
                 # Combined Initial Hybrid Score

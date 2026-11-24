@@ -7,6 +7,7 @@ Verifies:
 4. Magic byte signature enforcement on document uploads.
 """
 
+import os
 import pytest
 import io
 import zipfile
@@ -302,4 +303,102 @@ def test_prompt_injection_boundary_enforcement():
     assert "</document_context>" in prompt
     assert "<user_query>\nHow do indexes work?\n</user_query>" in prompt
     assert "Ignore previous instructions" in prompt
+
+
+@pytest.mark.asyncio
+async def test_cross_user_quiz_submission_prevention():
+    """
+    Ensure Tenant B cannot submit answers to a quiz created by Tenant A.
+    """
+    from app.models.models import Quiz, Question
+    tenant_a_id = str(uuid.uuid4())
+    tenant_b_id = str(uuid.uuid4())
+    quiz_id = str(uuid.uuid4())
+    question_id = str(uuid.uuid4())
+
+    async with AsyncSessionLocal() as session:
+        user_a = User(
+            id=tenant_a_id,
+            email=f"quiz_user_a_{uuid.uuid4().hex[:6]}@edupath.local",
+            hashed_password=get_password_hash("Password123!"),
+            full_name="Quiz Owner A"
+        )
+        user_b = User(
+            id=tenant_b_id,
+            email=f"quiz_user_b_{uuid.uuid4().hex[:6]}@edupath.local",
+            hashed_password=get_password_hash("Password123!"),
+            full_name="Quiz Attacker B"
+        )
+        quiz = Quiz(
+            id=quiz_id,
+            user_id=tenant_a_id,
+            title="Tenant A Private Assessment",
+            difficulty="medium",
+            total_questions=1,
+            time_limit_mins=10
+        )
+        question = Question(
+            id=question_id,
+            quiz_id=quiz_id,
+            question_text="What is 2 + 2?",
+            question_type="mcq",
+            options_json='["2", "3", "4", "5"]',
+            correct_answer="4",
+            points=1
+        )
+        session.add_all([user_a, user_b, quiz, question])
+        await session.commit()
+
+    token_b = create_access_token(tenant_b_id)
+    headers_b = {"Authorization": f"Bearer {token_b}"}
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        submit_payload = {
+            "time_taken_seconds": 30,
+            "answers": [{"question_id": question_id, "user_response": "4"}]
+        }
+        res = await ac.post(f"/api/quizzes/{quiz_id}/submit", headers=headers_b, json=submit_payload)
+        # Must be rejected because Tenant B does not own Tenant A's quiz
+        assert res.status_code == 404
+        assert "access denied" in res.json().get("detail", "").lower() or "not found" in res.json().get("detail", "").lower()
+
+
+def test_insufficient_context_abstention():
+    """
+    Verify AssistantService explicitly abstains when attached document context has no overlap with query.
+    """
+    from app.services.ai.assistant import AssistantService
+    svc = AssistantService()
+    doc_context = "Relational database normalization decomposes tables into 3NF and BCNF to eliminate redundancy."
+    # Irrelevant question about astrophysics
+    answer = svc._generate_deterministic_answer(
+        question="What is the speed of light in interstellar space?",
+        context=doc_context,
+        explanation_level="intermediate",
+        language="en",
+        citations=[{"doc_title": "Database Normalization Notes", "page_number": 1}]
+    )
+    assert "insufficient information" in answer.lower()
+    assert "Database Normalization Notes" in answer
+
+
+def test_database_backup_and_integrity():
+    """
+    Verify database backup utility creates valid, verified hot backup archive.
+    """
+    from app.core.backup import backup_database
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+        tmp_path = tmp.name
+
+    try:
+        dest_path, checksum, size = backup_database(destination_path=tmp_path)
+        assert os.path.exists(dest_path)
+        assert size > 0
+        assert len(checksum) == 64  # SHA256 length
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
 

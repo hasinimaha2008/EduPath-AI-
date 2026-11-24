@@ -218,13 +218,19 @@ async def submit_quiz(
 ):
     # Process through Central EduPath Intelligence Engine
     raw_answers = [{"question_id": a.question_id, "user_response": a.user_response} for a in submission.answers]
-    result = await intelligence_engine.evaluate_quiz_submission(
-        session=session,
-        user_id=current_user.id,
-        quiz_id=quiz_id,
-        user_answers=raw_answers,
-        time_taken_seconds=submission.time_taken_seconds
-    )
+    try:
+        result = await intelligence_engine.evaluate_quiz_submission(
+            session=session,
+            user_id=current_user.id,
+            quiz_id=quiz_id,
+            user_answers=raw_answers,
+            time_taken_seconds=submission.time_taken_seconds
+        )
+    except ValueError as ve:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(ve)
+        )
     return QuizResultResponse(**result)
 
 @router.get("/history/attempts", response_model=List[QuizAttemptHistoryItem])

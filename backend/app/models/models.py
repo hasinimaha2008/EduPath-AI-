@@ -2,7 +2,7 @@ import uuid
 import json
 from datetime import datetime, timezone
 from sqlalchemy import (
-    Column, String, Integer, Float, Boolean, Text, DateTime, ForeignKey, Index
+    Column, String, Integer, Float, Boolean, Text, DateTime, ForeignKey, Index, UniqueConstraint
 )
 from sqlalchemy.orm import relationship
 from app.core.database import Base
@@ -266,6 +266,9 @@ class UserAnswer(Base):
 
 class TopicPerformance(Base):
     __tablename__ = "topic_performances"
+    __table_args__ = (
+        UniqueConstraint("user_id", "topic_id", name="uq_user_topic_performance"),
+    )
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -324,6 +327,9 @@ class SubjectSkillMapping(Base):
 
 class CareerSkillRequirement(Base):
     __tablename__ = "career_skill_requirements"
+    __table_args__ = (
+        UniqueConstraint("career_role_id", "skill_id", name="uq_career_role_skill_req"),
+    )
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
     career_role_id = Column(String(36), ForeignKey("career_roles.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -337,6 +343,9 @@ class CareerSkillRequirement(Base):
 
 class UserSkill(Base):
     __tablename__ = "user_skills"
+    __table_args__ = (
+        UniqueConstraint("user_id", "skill_id", name="uq_user_skill"),
+    )
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -353,6 +362,9 @@ class UserSkill(Base):
 
 class CareerRecommendation(Base):
     __tablename__ = "career_recommendations"
+    __table_args__ = (
+        UniqueConstraint("user_id", "career_role_id", name="uq_user_career_recommendation"),
+    )
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -368,6 +380,9 @@ class CareerRecommendation(Base):
 
 class SkillGap(Base):
     __tablename__ = "skill_gaps"
+    __table_args__ = (
+        UniqueConstraint("user_id", "career_role_id", "skill_id", name="uq_user_career_skill_gap"),
+    )
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)

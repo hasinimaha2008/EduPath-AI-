@@ -29,31 +29,42 @@ class RateLimiter:
         self._redis_client = None
         self._redis_tested = False
         self._redis_available = False
+        self._last_retry_time = 0.0
+        self._retry_interval = 30.0  # Seconds before retrying Redis connection
 
     def _get_redis(self):
-        if not self._redis_tested:
-            self._redis_tested = True
-            if settings.REDIS_URL:
-                try:
-                    import redis
-                    client = redis.from_url(
-                        settings.REDIS_URL,
-                        decode_responses=True,
-                        socket_timeout=1.0,
-                        socket_connect_timeout=1.0
-                    )
-                    client.ping()
-                    self._redis_client = client
-                    self._redis_available = True
-                    logger.info(f"RateLimiter connected to distributed Redis at {settings.REDIS_URL}")
-                except Exception as e:
-                    logger.warning(f"Redis unavailable ({e}); falling back to local in-memory rate limiting.")
-                    self._redis_available = False
-                    self._redis_client = None
-            else:
+        now = time.time()
+        if self._redis_available and self._redis_client:
+            return self._redis_client
+
+        if self._redis_tested and not self._redis_available:
+            if now - self._last_retry_time < self._retry_interval:
+                return None
+
+        self._redis_tested = True
+        self._last_retry_time = now
+        if settings.REDIS_URL:
+            try:
+                import redis
+                client = redis.from_url(
+                    settings.REDIS_URL,
+                    decode_responses=True,
+                    socket_timeout=1.0,
+                    socket_connect_timeout=1.0
+                )
+                client.ping()
+                self._redis_client = client
+                self._redis_available = True
+                logger.info(f"RateLimiter connected to distributed Redis at {settings.REDIS_URL}")
+                return self._redis_client
+            except Exception as e:
+                logger.warning(f"Redis unavailable ({e}); falling back to local in-memory rate limiting.")
                 self._redis_available = False
                 self._redis_client = None
-        return self._redis_client if self._redis_available else None
+        else:
+            self._redis_available = False
+            self._redis_client = None
+        return None
 
     def is_allowed(self, key: str, custom_limit: Optional[int] = None) -> bool:
         if not settings.RATE_LIMIT_ENABLED:
@@ -77,6 +88,7 @@ class RateLimiter:
             except Exception as e:
                 logger.warning(f"Redis rate check error: {e}. Falling back to in-memory check.")
                 self._redis_available = False
+                self._last_retry_time = time.time()
 
         # In-memory sliding window fallback
         window_start = now - self.window

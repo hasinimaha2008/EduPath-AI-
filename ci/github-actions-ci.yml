@@ -35,12 +35,17 @@ jobs:
       - name: Run Pytest Test Suite
         working-directory: ./backend
         run: |
-          python -m pytest tests/test_api.py -v
+          python -m pytest tests/test_api.py tests/test_security_regression.py -v
 
       - name: Run RAG 50-Question Benchmark
         working-directory: ./backend
         run: |
           python tests/verify_rag_50_benchmark.py
+
+      - name: Run Independent RAG Benchmark
+        working-directory: ./backend
+        run: |
+          python tests/independent_rag_benchmark.py
 
       - name: Start Background FastAPI Server
         working-directory: ./backend

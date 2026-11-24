@@ -15,6 +15,7 @@ import re
 from urllib.parse import quote
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
+from collections import defaultdict
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, and_
 
@@ -97,11 +98,11 @@ class EduPathIntelligenceEngine:
         4. Triggers weak topic alerts and spaced repetition scheduling if score < 70%.
         5. Synchronizes user skills and recalculates career intelligence.
         """
-        quiz_stmt = select(Quiz).where(Quiz.id == quiz_id)
+        quiz_stmt = select(Quiz).where(Quiz.id == quiz_id, Quiz.user_id == user_id)
         quiz_res = await session.execute(quiz_stmt)
         quiz = quiz_res.scalar_one_or_none()
         if not quiz:
-            raise ValueError("Quiz not found")
+            raise ValueError("Quiz not found or access denied")
 
         q_stmt = select(Question).where(Question.quiz_id == quiz_id)
         q_res = await session.execute(q_stmt)
@@ -1069,6 +1070,15 @@ class EduPathIntelligenceEngine:
         tp_res = await session.execute(tp_stmt)
         tp_records = tp_res.all()
 
+        # Query user's quiz mistakes to determine predominant error category per topic
+        mistakes_stmt = select(QuizMistake).where(QuizMistake.user_id == user_id)
+        mistakes_res = await session.execute(mistakes_stmt)
+        user_mistakes = mistakes_res.scalars().all()
+        topic_mistake_cats = defaultdict(list)
+        for m in user_mistakes:
+            if m.topic_id:
+                topic_mistake_cats[m.topic_id].append(m.error_category or "unclassified")
+
         strong_topics = []
         weak_topics = []
         revision_recs = []
@@ -1090,7 +1100,14 @@ class EduPathIntelligenceEngine:
                 strong_topics.append(item)
             else:
                 weak_topics.append(item)
-                revision_recs.append(f"Review core principles for {topic_name} (accuracy: {tp.accuracy_percentage}%, attempts: {tp.total_attempts})")
+                cats = topic_mistake_cats.get(tp.topic_id, [])
+                predominant_cat = max(set(cats), key=cats.count) if cats else "conceptual_misunderstanding"
+                cat_label = predominant_cat.replace("_", " ").title()
+                priority = "High" if tp.accuracy_percentage < 50.0 else "Medium"
+                revision_recs.append(
+                    f"[{priority} Priority] Revise {topic_name}: Accuracy {tp.accuracy_percentage}% across {tp.total_attempts} attempt(s). "
+                    f"Predominant error pattern: {cat_label}."
+                )
 
         # Subject performance aggregation from real records
         subject_data: Dict[str, Dict[str, Any]] = {}

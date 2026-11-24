@@ -150,6 +150,12 @@ class AssistantService:
         if context and context.strip():
             context_block = (
                 f"{PROMPT_INJECTION_DEFENSE_DIRECTIVE}\n\n"
+                f"GROUNDING & ABSTENTION INSTRUCTION:\n"
+                f"You have been provided with validated document context in <document_context>. "
+                f"Ground your answer strictly on the facts, concepts, and relationships detailed within the provided context. "
+                f"If the user query cannot be reliably answered using the provided context, or if the question refers to concepts completely missing from the document, "
+                f"you MUST state explicitly: 'Based on the provided document, there is insufficient information to answer this question accurately.' "
+                f"Do NOT fabricate, speculate, or hallucinate outside the retrieved document scope.\n\n"
                 f"<document_context>\n{context.strip()[:4000]}\n</document_context>\n\n"
             )
 
@@ -173,6 +179,24 @@ class AssistantService:
     ) -> str:
         lvl = explanation_level.lower()
         q_clean = question.strip()
+
+        # Insufficient context check when a document context is provided
+        if context and context.strip():
+            import re
+            stopwords = {
+                "what", "which", "where", "when", "how", "why", "does", "explain", "describe",
+                "about", "this", "that", "these", "those", "have", "with", "from", "into", "their"
+            }
+            q_words = [w.lower() for w in re.findall(r'[a-zA-Z]{3,}', q_clean) if w.lower() not in stopwords]
+            ctx_lower = context.lower()
+            overlap = [w for w in q_words if w in ctx_lower]
+            if q_words and len(overlap) == 0:
+                doc_name = citations[0].get("doc_title", "uploaded document") if citations else "uploaded document"
+                return (
+                    f"Based on the provided context in **{doc_name}**, there is insufficient information to answer your question regarding '{q_clean}'. "
+                    f"The retrieved excerpts do not contain details matching this query. "
+                    f"Please consult the full document or upload relevant study material covering this specific topic."
+                )
 
         # Handle specific languages
         if language == "te":

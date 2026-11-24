@@ -80,6 +80,22 @@ async def security_and_observability_middleware(request: Request, call_next):
                 )
         except ValueError:
             pass
+    elif request.method in ("POST", "PUT", "PATCH"):
+        # Enforce body size limit even if Content-Length header is omitted or chunked
+        body_chunks = []
+        total_bytes = 0
+        async for chunk in request.stream():
+            total_bytes += len(chunk)
+            if total_bytes > settings.MAX_REQUEST_BODY_BYTES:
+                return JSONResponse(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    content={"detail": "Payload too large. Maximum permitted request body is 30MB."}
+                )
+            body_chunks.append(chunk)
+        full_body = b"".join(body_chunks)
+        async def receive():
+            return {"type": "http.request", "body": full_body, "more_body": False}
+        request._receive = receive
 
     start_time = time.perf_counter()
     response = await call_next(request)

@@ -94,6 +94,18 @@ async def upload_document(
             detail=f"Security rejection: file content does not match the declared '{ext}' format signature."
         )
 
+    # Pre-validate archive integrity and decompression bomb protection before database record creation
+    if ext in (".docx", ".pptx"):
+        try:
+            DocumentParserService.check_zip_bomb(saved_path)
+        except ValueError as ze:
+            if os.path.exists(saved_path):
+                os.remove(saved_path)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Security rejection: {str(ze)}"
+            )
+
     doc_title = title.strip() if title and title.strip() else os.path.splitext(file_name)[0]
 
     # Map file format

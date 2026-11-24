@@ -24,6 +24,8 @@ backend/.pytest_cache/
 backend/*.db
 backend/uploads/
 uploads/
+backups/
+backend/backups/
 
 # Environment and sensitive keys
 .env

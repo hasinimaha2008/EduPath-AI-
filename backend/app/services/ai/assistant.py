@@ -47,8 +47,8 @@ class AssistantService:
         if not context or not context.strip():
             return False, []
 
-        q_clean = question.strip().lower()
-        ctx_lower = context.lower()
+        q_clean = re.sub(r'[\u200b-\u200f\uFEFF\u202a-\u202e]', '', question.strip().lower())
+        ctx_lower = re.sub(r'[\u200b-\u200f\uFEFF\u202a-\u202e]', '', context.lower())
 
         # 1. Prompt Injection Boundary Check
         injection_patterns = [
@@ -116,6 +116,16 @@ class AssistantService:
         if not context:
             return ""
 
+        # 1. Normalize and strip invisible zero-width and bidi override characters
+        sanitized = re.sub(r'[\u200b-\u200f\uFEFF\u202a-\u202e]', '', context)
+
+        # 2. Neutralize XML boundary escape markers to prevent delimiter breakout
+        sanitized = sanitized.replace("</document_context>", "&lt;/document_context&gt;")
+        sanitized = sanitized.replace("<document_context>", "&lt;document_context&gt;")
+        sanitized = sanitized.replace("</untrusted_document_context>", "&lt;/untrusted_document_context&gt;")
+        sanitized = sanitized.replace("<untrusted_document_context>", "&lt;untrusted_document_context&gt;")
+
+        # 3. Disarm explicit instruction overrides, jailbreaks, and secret extractions
         disarm_patterns = [
             (r"(?i)\b(ignore\s+(?:all\s+)?(?:previous\s+|prior\s+)?instructions\b)", r"[DISARMED: \1]"),
             (r"(?i)\b(system\s+override\s*:\s*)", r"[DISARMED: \1]"),
@@ -125,7 +135,6 @@ class AssistantService:
             (r"(?i)\b(print\s+(?:the\s+|all\s+)?(?:system\s+prompt|secret|api_key|database_secret|credentials|password)\b)", r"[DISARMED: \1]")
         ]
 
-        sanitized = context
         for pat, replacement in disarm_patterns:
             sanitized = re.sub(pat, replacement, sanitized)
 

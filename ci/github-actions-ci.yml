@@ -40,18 +40,25 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install flake8
+
+      - name: Verify Backend Syntax and Compilation
+        working-directory: ./backend
+        run: |
+          python -m compileall app/
+          flake8 app/ --count --select=E9,F63,F7,F82 --show-source --statistics
 
       - name: Initialize Database Catalog & Taxonomy
         working-directory: ./backend
         run: |
           python -m app.core.init_db
 
-      - name: Run Pytest Test Suites (44 Tests)
+      - name: Run Pytest Comprehensive Test Suites (49 Tests)
         working-directory: ./backend
         run: |
-          python -m pytest tests/test_api.py tests/test_security_regression.py tests/test_assistant_correctness.py tests/test_backup_restore.py tests/test_path_security.py -v
+          python -m pytest -v
 
-      - name: Run Comprehensive 100-Question RAG Benchmark
+      - name: Run Comprehensive 100-Question RAG Benchmark (v2.1)
         working-directory: ./backend
         run: |
           python tests/rag_comprehensive_100_evaluation.py

@@ -42,6 +42,7 @@ import re
 import asyncio
 from datetime import datetime
 from typing import List, Dict, Any, Tuple, Set, Optional
+import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -581,6 +582,9 @@ async def run_comprehensive_100_rag_evaluation():
         "ndcg3_list": [],
         "ans_relevance_list": [],
         "ctx_relevance_list": [],
+        "ctx_precision_list": [],
+        "ctx_noise_list": [],
+        "ctx_coverage_list": [],
         "retrieval_latencies": [],
         "generation_latencies": [],
         "e2e_latencies": [],
@@ -588,6 +592,7 @@ async def run_comprehensive_100_rag_evaluation():
         "faithfulness_total": 0,
         "citation_precision_list": [],
         "citation_completeness_list": [],
+        "citation_traceability_list": [],
         "abstention_passed": 0,
         "abstention_total": 0,
         "category_results": {}
@@ -712,9 +717,17 @@ async def run_comprehensive_100_rag_evaluation():
             ans_relevance = matched_query_kw / len(expected_kw) if expected_kw else 1.0
             metrics["ans_relevance_list"].append(ans_relevance)
 
-            # Context Relevance: proportion of retrieved chunks containing domain concepts
-            ctx_relevance = sum(relevance_scores) / len(relevance_scores) if relevance_scores else 0.0
-            metrics["ctx_relevance_list"].append(ctx_relevance)
+            # Context Precision, Noise Ratio & Coverage
+            ctx_prec = sum(relevance_scores) / len(relevance_scores) if relevance_scores else 0.0
+            ctx_noise = 1.0 - ctx_prec
+            all_chunks_text = " ".join(r.get("content", "").lower() for r in retrieved)
+            covered_kw = sum(1 for kw in expected_kw if kw.lower() in all_chunks_text)
+            ctx_cov = covered_kw / len(expected_kw) if expected_kw else 1.0
+
+            metrics["ctx_relevance_list"].append(ctx_prec)
+            metrics["ctx_precision_list"].append(ctx_prec)
+            metrics["ctx_noise_list"].append(ctx_noise)
+            metrics["ctx_coverage_list"].append(ctx_cov)
 
             # -------------------------------------------------------------
             # SCIENTIFIC CLAIM-LEVEL FAITHFULNESS VERIFICATION
@@ -723,6 +736,7 @@ async def run_comprehensive_100_rag_evaluation():
             claims = extract_claims_from_answer(answer_text)
 
             claim_verdicts = []
+            matched_sources = set()
             for cl in claims:
                 verdict, score, matched_p = verify_claim_support(cl, retrieved_passages)
                 claim_verdicts.append(verdict)
@@ -734,6 +748,11 @@ async def run_comprehensive_100_rag_evaluation():
                 else:
                     claim_telemetry["unsupported"] += 1
 
+                if verdict in ("fully_supported", "partially_supported") and matched_p:
+                    for r in retrieved:
+                        if r.get("content") == matched_p:
+                            matched_sources.add(r.get("doc_title"))
+
             supported_claims = sum(1 for v in claim_verdicts if v in ("fully_supported", "partially_supported"))
             is_faithful = (len(claims) == 0) or ((supported_claims / len(claims)) >= 0.70 and matched_query_kw >= 1)
 
@@ -743,10 +762,11 @@ async def run_comprehensive_100_rag_evaluation():
                 metrics["category_results"][category]["correct"] += 1
 
             # -------------------------------------------------------------
-            # CITATION QUALITY & CLAIM-TO-CITATION MAPPING
+            # CITATION QUALITY & CLAIM-TO-CITATION MAPPING & TRACEABILITY
             # -------------------------------------------------------------
             if returned_citations:
                 valid_cit = 0
+                traceable_cit = 0
                 for c in returned_citations:
                     title = c.get("doc_title", "")
                     if title in known_doc_titles:
@@ -754,13 +774,18 @@ async def run_comprehensive_100_rag_evaluation():
                         claim_telemetry["claim_to_citation_mappings"] += 1
                     else:
                         claim_telemetry["citation_hallucinations"] += 1
+                    if title in matched_sources:
+                        traceable_cit += 1
                 cit_precision = valid_cit / len(returned_citations)
                 cit_completeness = 1.0
+                cit_traceability = (traceable_cit / len(returned_citations)) if returned_citations else 1.0
             else:
                 cit_precision = 0.0
                 cit_completeness = 0.0
+                cit_traceability = 0.0
             metrics["citation_precision_list"].append(cit_precision)
             metrics["citation_completeness_list"].append(cit_completeness)
+            metrics["citation_traceability_list"].append(cit_traceability)
 
         # D. Scientifically Evaluate Unanswerable & Adversarial Questions
         else:
@@ -803,7 +828,7 @@ async def run_comprehensive_100_rag_evaluation():
             "citations_count": len(returned_citations)
         })
 
-    # 3. Compute Summary Statistics
+    # 3. Compute Summary Statistics & Statistical Percentiles
     total_eval_time = time.time() - start_all
     avg_p3 = sum(metrics["p3_list"]) / len(metrics["p3_list"]) if metrics["p3_list"] else 0.0
     avg_r3 = sum(metrics["r3_list"]) / len(metrics["r3_list"]) if metrics["r3_list"] else 0.0
@@ -812,14 +837,40 @@ async def run_comprehensive_100_rag_evaluation():
     avg_ndcg3 = sum(metrics["ndcg3_list"]) / len(metrics["ndcg3_list"]) if metrics["ndcg3_list"] else 0.0
     avg_ans_rel = sum(metrics["ans_relevance_list"]) / len(metrics["ans_relevance_list"]) if metrics["ans_relevance_list"] else 0.0
     avg_ctx_rel = sum(metrics["ctx_relevance_list"]) / len(metrics["ctx_relevance_list"]) if metrics["ctx_relevance_list"] else 0.0
+    avg_ctx_prec = sum(metrics["ctx_precision_list"]) / len(metrics["ctx_precision_list"]) if metrics["ctx_precision_list"] else 0.0
+    avg_ctx_noise = sum(metrics["ctx_noise_list"]) / len(metrics["ctx_noise_list"]) if metrics["ctx_noise_list"] else 0.0
+    avg_ctx_cov = sum(metrics["ctx_coverage_list"]) / len(metrics["ctx_coverage_list"]) if metrics["ctx_coverage_list"] else 0.0
+
     avg_ret_lat = sum(metrics["retrieval_latencies"]) / len(metrics["retrieval_latencies"])
     avg_gen_lat = sum(metrics["generation_latencies"]) / len(metrics["generation_latencies"])
     avg_e2e_lat = sum(metrics["e2e_latencies"]) / len(metrics["e2e_latencies"])
+
+    # Statistical Latency Percentiles (Phase Three)
+    ret_arr = np.array(metrics["retrieval_latencies"])
+    gen_arr = np.array(metrics["generation_latencies"])
+    e2e_arr = np.array(metrics["e2e_latencies"])
+
+    p50_ret, p90_ret, p95_ret, p99_ret = float(np.percentile(ret_arr, 50)), float(np.percentile(ret_arr, 90)), float(np.percentile(ret_arr, 95)), float(np.percentile(ret_arr, 99))
+    p50_gen, p90_gen, p95_gen, p99_gen = float(np.percentile(gen_arr, 50)), float(np.percentile(gen_arr, 90)), float(np.percentile(gen_arr, 95)), float(np.percentile(gen_arr, 99))
+    p50_e2e, p90_e2e, p95_e2e, p99_e2e = float(np.percentile(e2e_arr, 50)), float(np.percentile(e2e_arr, 90)), float(np.percentile(e2e_arr, 95)), float(np.percentile(e2e_arr, 99))
+
+    std_e2e = float(np.std(e2e_arr))
+    ci95_e2e = 1.96 * (std_e2e / math.sqrt(max(len(e2e_arr), 1)))
 
     faithfulness_rate = (metrics["faithfulness_passed"] / metrics["faithfulness_total"] * 100) if metrics["faithfulness_total"] else 100.0
     abstention_rate = (metrics["abstention_passed"] / metrics["abstention_total"] * 100) if metrics["abstention_total"] else 100.0
     avg_cit_prec = (sum(metrics["citation_precision_list"]) / len(metrics["citation_precision_list"]) * 100) if metrics["citation_precision_list"] else 100.0
     avg_cit_comp = (sum(metrics["citation_completeness_list"]) / len(metrics["citation_completeness_list"]) * 100) if metrics["citation_completeness_list"] else 100.0
+    avg_cit_trace = (sum(metrics["citation_traceability_list"]) / len(metrics["citation_traceability_list"]) * 100) if metrics["citation_traceability_list"] else 100.0
+
+    # 95% Confidence Intervals
+    n_faith = max(metrics["faithfulness_total"], 1)
+    p_faith = metrics["faithfulness_passed"] / n_faith
+    ci95_faith = 1.96 * math.sqrt(p_faith * (1.0 - p_faith) / n_faith) * 100
+
+    n_abst = max(metrics["abstention_total"], 1)
+    p_abst = metrics["abstention_passed"] / n_abst
+    ci95_abst = 1.96 * math.sqrt(p_abst * (1.0 - p_abst) / n_abst) * 100
 
     # Modality comparative averages
     mrr_rrf = sum(retrieval_comparison["hybrid_rrf"]["mrr"]) / max(len(retrieval_comparison["hybrid_rrf"]["mrr"]), 1)
@@ -832,7 +883,7 @@ async def run_comprehensive_100_rag_evaluation():
 
     # 4. Generate JSON Report
     report_data = {
-        "benchmark_version": "2.0.0-scientific-claims",
+        "benchmark_version": "2.1.0-scientific-claims-and-percentiles",
         "benchmark_timestamp": datetime.now().isoformat(),
         "total_questions": len(questions),
         "execution_duration_seconds": round(total_eval_time, 2),
@@ -844,13 +895,25 @@ async def run_comprehensive_100_rag_evaluation():
             "ndcg_at_3": round(avg_ndcg3, 3),
             "answer_relevance_pct": round(avg_ans_rel * 100, 1),
             "context_relevance_pct": round(avg_ctx_rel * 100, 1),
+            "context_precision_pct": round(avg_ctx_prec * 100, 1),
+            "context_noise_ratio_pct": round(avg_ctx_noise * 100, 1),
+            "context_concept_coverage_pct": round(avg_ctx_cov * 100, 1),
             "faithfulness_rate_pct": round(faithfulness_rate, 1),
+            "faithfulness_95ci_pct": round(ci95_faith, 2),
             "citation_precision_pct": round(avg_cit_prec, 1),
             "citation_completeness_pct": round(avg_cit_comp, 1),
+            "citation_traceability_pct": round(avg_cit_trace, 1),
             "abstention_accuracy_pct": round(abstention_rate, 1),
+            "abstention_95ci_pct": round(ci95_abst, 2),
             "average_retrieval_latency_ms": round(avg_ret_lat, 2),
             "average_generation_latency_ms": round(avg_gen_lat, 2),
-            "average_e2e_latency_ms": round(avg_e2e_lat, 2)
+            "average_e2e_latency_ms": round(avg_e2e_lat, 2),
+            "e2e_latency_95ci_ms": round(ci95_e2e, 2),
+            "latency_percentiles": {
+                "retrieval": {"p50": round(p50_ret, 2), "p90": round(p90_ret, 2), "p95": round(p95_ret, 2), "p99": round(p99_ret, 2)},
+                "generation": {"p50": round(p50_gen, 2), "p90": round(p90_gen, 2), "p95": round(p95_gen, 2), "p99": round(p99_gen, 2)},
+                "e2e": {"p50": round(p50_e2e, 2), "p90": round(p90_e2e, 2), "p95": round(p95_e2e, 2), "p99": round(p99_e2e, 2)}
+            }
         },
         "claim_level_verification": {
             "total_claims_evaluated": claim_telemetry["total_claims"],
@@ -877,7 +940,7 @@ async def run_comprehensive_100_rag_evaluation():
 
     # 5. Output Verification Report
     print("\n" + "=" * 80)
-    print("EMPIRICAL 100-QUESTION SCIENTIFIC RAG BENCHMARK RESULTS (v2.0):")
+    print("EMPIRICAL 100-QUESTION SCIENTIFIC RAG BENCHMARK RESULTS (v2.1):")
     print("=" * 80)
     print(f"  * Total Questions Evaluated:          100")
     print(f"  * Precision@3 (Answerable):           {avg_p3:.3f}   (Target: >= 0.500)")
@@ -887,13 +950,17 @@ async def run_comprehensive_100_rag_evaluation():
     print(f"  * Normalized DCG (nDCG@3):            {avg_ndcg3:.3f}   (Target: >= 0.750)")
     print(f"  * Answer Relevance:                   {avg_ans_rel * 100:.1f}%")
     print(f"  * Context Relevance:                  {avg_ctx_rel * 100:.1f}%")
-    print(f"  * Answer Faithfulness Rate:           {faithfulness_rate:.1f}% ({metrics['faithfulness_passed']}/{metrics['faithfulness_total']})")
+    print(f"  * Context Noise Ratio:                {avg_ctx_noise * 100:.1f}%")
+    print(f"  * Context Concept Coverage:           {avg_ctx_cov * 100:.1f}%")
+    print(f"  * Answer Faithfulness Rate:           {faithfulness_rate:.1f}% +/- {ci95_faith:.1f}% (95% CI)")
     print(f"  * Citation Precision:                 {avg_cit_prec:.1f}%")
     print(f"  * Citation Completeness:              {avg_cit_comp:.1f}%")
-    print(f"  * Safe Abstention Rate:               {abstention_rate:.1f}% ({metrics['abstention_passed']}/{metrics['abstention_total']})")
-    print(f"  * Average Retrieval Latency:          {avg_ret_lat:.2f} ms")
-    print(f"  * Average Generation Latency:         {avg_gen_lat:.2f} ms")
-    print(f"  * Average End-to-End Latency:         {avg_e2e_lat:.2f} ms")
+    print(f"  * Citation Traceability to Claims:    {avg_cit_trace:.1f}%")
+    print(f"  * Safe Abstention Rate:               {abstention_rate:.1f}% +/- {ci95_abst:.1f}% (95% CI)")
+    print(f"  * Latency Breakdown (Mean +/- 95% CI):")
+    print(f"    - Retrieval Mean:                   {avg_ret_lat:.2f} ms | P50={p50_ret:.2f}ms | P95={p95_ret:.2f}ms | P99={p99_ret:.2f}ms")
+    print(f"    - Generation Mean:                  {avg_gen_lat:.2f} ms | P50={p50_gen:.2f}ms | P95={p95_gen:.2f}ms | P99={p99_gen:.2f}ms")
+    print(f"    - E2E Mean:                         {avg_e2e_lat:.2f} +/- {ci95_e2e:.2f} ms | P50={p50_e2e:.2f}ms | P95={p95_e2e:.2f}ms | P99={p99_e2e:.2f}ms")
     print(f"  * Total Benchmark Execution Time:     {total_eval_time:.2f} s")
     print("=" * 80)
 

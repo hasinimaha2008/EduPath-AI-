@@ -13,9 +13,16 @@ concurrency:
 
 jobs:
   backend-qa:
-    name: Backend Test, Verification & Security Suite
+    name: Backend Test, Security, RAG & Integrity Suite
     runs-on: ubuntu-latest
     timeout-minutes: 15
+
+    env:
+      JWT_SECRET: "ci-test-secure-jwt-secret-string-at-least-32-chars-long"
+      DATABASE_URL: "sqlite+aiosqlite:///./test_ci.db"
+      GEMINI_API_KEY: ""
+      ALLOW_DEMO_LOGIN: "true"
+      UPLOAD_DIR: "./uploads"
 
     steps:
       - name: Checkout Source Code
@@ -34,22 +41,27 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Initialize Database Catalog
+      - name: Initialize Database Catalog & Taxonomy
         working-directory: ./backend
         run: |
           python -m app.core.init_db
 
-      - name: Run Pytest Test Suites
+      - name: Run Pytest Test Suites (42 Tests)
         working-directory: ./backend
         run: |
-          python -m pytest tests/test_api.py tests/test_security_regression.py tests/test_assistant_correctness.py -v
+          python -m pytest tests/test_api.py tests/test_security_regression.py tests/test_assistant_correctness.py tests/test_backup_restore.py tests/test_path_security.py -v
 
-      - name: Run RAG 50-Question Benchmark
+      - name: Run Comprehensive 100-Question RAG Benchmark
+        working-directory: ./backend
+        run: |
+          python tests/rag_comprehensive_100_evaluation.py
+
+      - name: Run Standard RAG 50-Question Information Retrieval Benchmark
         working-directory: ./backend
         run: |
           python tests/verify_rag_50_benchmark.py
 
-      - name: Run Independent RAG Benchmark
+      - name: Run Independent 56-Query Multi-Domain Benchmark
         working-directory: ./backend
         run: |
           python tests/independent_rag_benchmark.py
@@ -60,25 +72,36 @@ jobs:
           uvicorn app.main:app --host 127.0.0.1 --port 8000 &
           sleep 4
 
-      - name: Run Master QA Security & Latency Audit
+      - name: Run Master QA Security & Latency Audit (18 Suites)
         working-directory: ./backend
         run: |
           python tests/master_qa_audit.py
 
-      - name: Run Deep Feature Backtesting
+      - name: Run Deep Feature-by-Feature Backtesting (12 Features)
         working-directory: ./backend
         run: |
           python tests/deep_feature_audit.py
 
-      - name: Run Live User Journey Verification
+      - name: Run Live User Journey Verification (11 Steps)
         working-directory: ./backend
         run: |
           python tests/live_user_journey.py
 
+      - name: Upload RAG 100 Benchmark Report Artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rag-100-benchmark-report
+          path: backend/tests/rag_100_benchmark_report.json
+          retention-days: 14
+
   frontend-qa:
-    name: Frontend Lint & Production Build
+    name: Frontend Lint & Production Static Prerendering Build
     runs-on: ubuntu-latest
     timeout-minutes: 15
+
+    env:
+      NEXT_PUBLIC_API_URL: "http://127.0.0.1:8000"
 
     steps:
       - name: Checkout Source Code
@@ -101,7 +124,7 @@ jobs:
         run: |
           npm run lint
 
-      - name: Run Next.js Production Build
+      - name: Run Next.js Production Build (22 Static Routes)
         working-directory: ./frontend
         run: |
           npm run build

@@ -604,12 +604,21 @@ from sqlalchemy import event
 def cleanup_document_file_after_delete(mapper, connection, target):
     """
     Guarantees physical file cleanup when Document records are deleted directly
-    or through cascade deletions when parent Users are removed.
+    or through cascade deletions when parent Users are removed, strictly
+    validating path containment within UPLOAD_DIR using os.path.commonpath().
     """
-    if target and getattr(target, "file_path", None) and os.path.exists(target.file_path):
-        try:
-            os.remove(target.file_path)
-        except Exception:
-            pass
+    fpath = getattr(target, "file_path", None)
+    if not fpath:
+        return
+    try:
+        from app.core.security import is_safe_upload_path
+        from app.core.config import settings
+        if is_safe_upload_path(settings.UPLOAD_DIR, fpath):
+            real_target = os.path.realpath(fpath)
+            if os.path.exists(real_target):
+                os.remove(real_target)
+    except Exception:
+        pass
+
 
 

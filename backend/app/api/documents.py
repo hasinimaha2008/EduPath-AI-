@@ -11,7 +11,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.database import get_db
 from app.api.deps import get_current_user
-from app.core.security import check_ai_rate_limit
+from app.core.security import check_ai_rate_limit, is_safe_upload_path
 from app.models.models import User, Document, DocumentChunk
 from app.schemas.schemas import DocumentResponse
 from app.services.document_parser import DocumentParserService
@@ -217,12 +217,15 @@ async def delete_document(
         raise HTTPException(status_code=404, detail="Document not found or access denied.")
 
     real_upload_dir = os.path.realpath(settings.UPLOAD_DIR)
-    real_file_path = os.path.realpath(doc.file_path)
-    if real_file_path.startswith(real_upload_dir) and os.path.exists(real_file_path):
-        try:
-            os.remove(real_file_path)
-        except Exception:
-            pass
+    if is_safe_upload_path(real_upload_dir, doc.file_path):
+        real_file_path = os.path.realpath(doc.file_path)
+        if os.path.exists(real_file_path):
+            try:
+                os.remove(real_file_path)
+            except Exception as e:
+                logger.warning(f"Failed to remove physical file {real_file_path} on deletion: {e}")
+    else:
+        logger.warning(f"Unsafe document path blocked on deletion for doc {doc.id}: {doc.file_path}")
 
     await session.delete(doc)
     await session.commit()
@@ -236,7 +239,7 @@ async def download_document(
 ):
     """
     Secure document download and export enforcing authenticated user ownership
-    and path traversal prevention.
+    and path traversal prevention via os.path.commonpath().
     """
     stmt = select(Document).where(Document.id == document_id, Document.user_id == current_user.id)
     res = await session.execute(stmt)
@@ -244,10 +247,14 @@ async def download_document(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found or access denied.")
 
-    # Prevent directory traversal attacks
+    # Prevent directory traversal attacks using os.path.commonpath()
     real_upload_dir = os.path.realpath(settings.UPLOAD_DIR)
+    if not is_safe_upload_path(real_upload_dir, doc.file_path):
+        logger.warning(f"Path traversal / unsafe path download attempt blocked: doc_id={doc.id}, path={doc.file_path}")
+        raise HTTPException(status_code=400, detail="Invalid document storage path or traversal attempt detected.")
+
     real_file_path = os.path.realpath(doc.file_path)
-    if not real_file_path.startswith(real_upload_dir) or not os.path.exists(real_file_path):
+    if not os.path.exists(real_file_path):
         raise HTTPException(status_code=404, detail="Requested file does not exist on disk.")
 
     return FileResponse(

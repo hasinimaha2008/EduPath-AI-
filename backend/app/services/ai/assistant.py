@@ -39,24 +39,71 @@ class AssistantService:
     @staticmethod
     def check_context_sufficiency(question: str, context: Optional[str]) -> Tuple[bool, List[str]]:
         """
-        Evaluates whether the attached document context contains substantive overlap
-        with the user's inquiry. Returns (is_sufficient, matched_keywords).
+        Evaluates whether the attached document context contains substantive, high-quality
+        evidence relevant to the user's inquiry, measuring term coverage, sentence-level
+        co-occurrence density, and prompt-injection safety boundaries.
+        Returns (is_sufficient, matched_keywords).
         """
         if not context or not context.strip():
             return False, []
 
+        q_clean = question.strip().lower()
+        ctx_lower = context.lower()
+
+        # 1. Prompt Injection Boundary Check
+        injection_patterns = [
+            r"ignore\s+(all\s+)?(previous|prior)\s+instructions",
+            r"system\s+prompt",
+            r"override\s+(system|rules)",
+            r"jailbreak",
+            r"reveal\s+(the\s+|all\s+)?(secret|key|credentials|instructions|internal)",
+            r"disregard\s+(safety|rules|previous|prior)",
+            r"bypass\s+(restrictions|rules|filters|safety)",
+            r"forget\s+(everything|all)"
+        ]
+        for pat in injection_patterns:
+            if re.search(pat, q_clean):
+                logger.warning(f"Prompt injection pattern detected in query: '{pat}'")
+                return False, []
+
+        # 2. Extract substantive query content words
         q_words = [
-            w.lower()
-            for w in re.findall(r'[a-zA-Z]{3,}', question)
-            if w.lower() not in STOPWORDS
+            w for w in re.findall(r'[a-zA-Z]{3,}', q_clean)
+            if w not in STOPWORDS
         ]
         if not q_words:
-            # Query has no content words (e.g., punctuation or symbols)
-            return True, []
+            # Query has no substantive content words
+            return False, []
 
-        ctx_lower = context.lower()
-        matched = [w for w in q_words if w in ctx_lower]
-        is_sufficient = len(matched) > 0
+        # 3. Match terms using exact word boundaries
+        matched = []
+        for w in set(q_words):
+            if re.search(r'\b' + re.escape(w) + r'\b', ctx_lower):
+                matched.append(w)
+
+        if not matched:
+            return False, []
+
+        # 4. Measure Evidence Quality & Sentence-Level Co-occurrence Density
+        sentences = [s.strip().lower() for s in re.split(r'[.!?\n]+', context) if s.strip()]
+        max_cooccurring = 0
+        for s in sentences:
+            cnt = sum(1 for w in matched if re.search(r'\b' + re.escape(w) + r'\b', s))
+            if cnt > max_cooccurring:
+                max_cooccurring = cnt
+
+        coverage = len(matched) / len(q_words)
+
+        # Multi-tier evidence sufficiency decision:
+        if len(q_words) == 1:
+            is_sufficient = len(matched) == 1
+        elif len(q_words) == 2:
+            is_sufficient = (len(matched) == 2) or (len(matched) == 1 and max_cooccurring >= 1)
+        else:
+            # For queries with 3+ terms:
+            # Requires at least 2 distinct matched terms, OR >= 40% coverage, OR high sentence density (>=2 co-occurring)
+            is_sufficient = (len(matched) >= 2) or (coverage >= 0.40) or (max_cooccurring >= 2)
+
         return is_sufficient, matched
 
     def _extract_relevant_excerpts(self, context: str, keywords: List[str], max_sentences: int = 4) -> str:
@@ -104,9 +151,18 @@ class AssistantService:
         if context and context.strip():
             is_sufficient, matched_kw = self.check_context_sufficiency(q_clean, context)
             if not is_sufficient:
+                mode_tag = ""
+                lvl = explanation_level.lower()
+                if lvl == "eli5":
+                    mode_tag = " (ELI5 Mode — Simple Summary)"
+                elif lvl == "advanced":
+                    mode_tag = " (Advanced Architectural Invariants & Complexity Mode)"
+                elif lvl == "exam_oriented":
+                    mode_tag = " (Exam-Oriented Master Notes Mode)"
+
                 # Explicit Abstention: context is insufficient for this question
                 abstention_msg = (
-                    f"Based on the provided document context in **{doc_name}**, there is insufficient information "
+                    f"Based on the provided document context in **{doc_name}**{mode_tag}, there is insufficient information "
                     f"to answer your question regarding '{q_clean}'. The referenced excerpts do not contain details "
                     f"matching this inquiry. Please consult the full document or provide additional study material."
                 )
@@ -182,8 +238,17 @@ class AssistantService:
         if context and context.strip():
             is_sufficient, _ = self.check_context_sufficiency(q_clean, context)
             if not is_sufficient:
+                mode_tag = ""
+                lvl = explanation_level.lower()
+                if lvl == "eli5":
+                    mode_tag = " (ELI5 Mode — Simple Summary)"
+                elif lvl == "advanced":
+                    mode_tag = " (Advanced Architectural Invariants & Complexity Mode)"
+                elif lvl == "exam_oriented":
+                    mode_tag = " (Exam-Oriented Master Notes Mode)"
+
                 abstention_msg = (
-                    f"Based on the provided document context in **{doc_name}**, there is insufficient information "
+                    f"Based on the provided document context in **{doc_name}**{mode_tag}, there is insufficient information "
                     f"to answer your question regarding '{q_clean}'. The referenced excerpts do not contain details "
                     f"matching this inquiry. Please consult the full document or provide additional study material."
                 )

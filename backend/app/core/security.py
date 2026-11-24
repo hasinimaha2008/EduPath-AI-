@@ -1,3 +1,4 @@
+import os
 import time
 import re
 import secrets
@@ -190,3 +191,26 @@ def decode_access_token(token: str) -> Optional[str]:
         return str(user_id).strip()
     except (JWTError, ExpiredSignatureError):
         return None
+
+def is_safe_upload_path(base_dir: str, target_path: str) -> bool:
+    """
+    Validates that target_path resolves strictly within base_dir using os.path.commonpath().
+    Protects against directory traversal (../), sibling-directory prefix matching
+    (e.g., /app/uploads_evil vs /app/uploads), and symlink escape attacks.
+    """
+    if not base_dir or not target_path:
+        return False
+    try:
+        real_base = os.path.realpath(base_dir)
+        real_target = os.path.realpath(target_path)
+        # Sibling directory check via commonpath:
+        # commonpath must resolve strictly to real_base
+        if os.path.commonpath([real_base, real_target]) != real_base:
+            return False
+        # Target path cannot be the upload base directory itself
+        if real_base == real_target:
+            return False
+        return True
+    except (ValueError, OSError):
+        return False
+

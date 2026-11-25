@@ -53,7 +53,7 @@ jobs:
         run: |
           python -m app.core.init_db
 
-      - name: Run Pytest Comprehensive Test Suites (49 Tests)
+      - name: Run Pytest Comprehensive Test Suites (50 Tests)
         working-directory: ./backend
         run: |
           python -m pytest -v

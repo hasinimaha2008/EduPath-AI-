@@ -613,11 +613,16 @@ async def run_comprehensive_100_rag_evaluation():
     }
 
     metrics = {
+        "p1_list": [],
         "p3_list": [],
+        "p5_list": [],
+        "r1_list": [],
         "r3_list": [],
+        "r5_list": [],
         "hit1_list": [],
         "mrr_list": [],
         "ndcg3_list": [],
+        "ndcg5_list": [],
         "ans_relevance_list": [],
         "ctx_relevance_list": [],
         "ctx_precision_list": [],
@@ -654,15 +659,17 @@ async def run_comprehensive_100_rag_evaluation():
         # A. Measure Pure Retrieval Performance (Hybrid RRF)
         t0 = time.time()
         async with AsyncSessionLocal() as session:
-            retrieved = await rag_service.retrieve_relevant_chunks(
+            retrieved_5 = await rag_service.retrieve_relevant_chunks(
                 session=session,
                 user_id=user_id,
                 query=q_text,
-                top_k=3
+                top_k=5
             )
         retrieval_latency = (time.time() - t0) * 1000
         metrics["retrieval_latencies"].append(retrieval_latency)
         metrics["category_results"][category]["latencies"].append(retrieval_latency)
+
+        retrieved = retrieved_5[:3]
 
         # Baseline Comparison: Evaluate Pure Dense vs Pure BM25 vs Hybrid RRF on answerable queries
         if should_answer and retrieved:
@@ -714,40 +721,50 @@ async def run_comprehensive_100_rag_evaluation():
 
         # C. Scientifically Evaluate Answerable Questions
         if should_answer:
-            # Relevance scoring for retrieved top-3
-            relevance_scores = []
-            for r in retrieved:
+            # Relevance scoring for retrieved top-5
+            relevance_scores_5 = []
+            for r in retrieved_5:
                 content_lower = r.get("content", "").lower()
                 matches = sum(1 for kw in expected_kw if kw.lower() in content_lower)
-                relevance_scores.append(1 if matches > 0 else 0)
+                relevance_scores_5.append(1 if matches > 0 else 0)
 
-            # Precision@3
-            p3 = sum(relevance_scores) / 3.0 if retrieved else 0.0
+            relevance_scores = relevance_scores_5[:3]
+
+            # Precision @ 1, 3, 5
+            p1 = float(relevance_scores_5[0]) if relevance_scores_5 else 0.0
+            p3 = sum(relevance_scores_5[:3]) / 3.0 if len(relevance_scores_5) >= 3 else (sum(relevance_scores_5[:3]) / max(len(relevance_scores_5[:3]), 1))
+            p5 = sum(relevance_scores_5[:5]) / 5.0 if len(relevance_scores_5) >= 5 else (sum(relevance_scores_5[:5]) / max(len(relevance_scores_5[:5]), 1))
+            metrics["p1_list"].append(p1)
             metrics["p3_list"].append(p3)
+            metrics["p5_list"].append(p5)
 
-            # Recall@3 (Hit Rate@3)
-            r3 = 1.0 if sum(relevance_scores) > 0 else 0.0
+            # Recall @ 1, 3, 5 (Hit Rate @ K)
+            r1 = 1.0 if (len(relevance_scores_5) > 0 and relevance_scores_5[0] == 1) else 0.0
+            r3 = 1.0 if sum(relevance_scores_5[:3]) > 0 else 0.0
+            r5 = 1.0 if sum(relevance_scores_5[:5]) > 0 else 0.0
+            metrics["r1_list"].append(r1)
             metrics["r3_list"].append(r3)
-
-            # Hit@1
-            h1 = 1.0 if (len(relevance_scores) > 0 and relevance_scores[0] == 1) else 0.0
-            metrics["hit1_list"].append(h1)
+            metrics["r5_list"].append(r5)
+            metrics["hit1_list"].append(r1)
 
             # MRR
             recip_rank = 0.0
-            for rank_idx, rel in enumerate(relevance_scores):
+            for rank_idx, rel in enumerate(relevance_scores_5):
                 if rel == 1:
                     recip_rank = 1.0 / (rank_idx + 1)
                     break
             metrics["mrr_list"].append(recip_rank)
 
             # nDCG@3
-            dcg = 0.0
-            for i, rel in enumerate(relevance_scores):
-                dcg += (2**rel - 1) / math.log2(i + 2)
+            dcg3 = sum((2**rel - 1) / math.log2(i + 2) for i, rel in enumerate(relevance_scores_5[:3]))
             idcg = (2**1 - 1) / math.log2(2)
-            ndcg = min(1.0, dcg / idcg) if idcg > 0 else 0.0
-            metrics["ndcg3_list"].append(ndcg)
+            ndcg3 = min(1.0, dcg3 / idcg) if idcg > 0 else 0.0
+            metrics["ndcg3_list"].append(ndcg3)
+
+            # nDCG@5
+            dcg5 = sum((2**rel - 1) / math.log2(i + 2) for i, rel in enumerate(relevance_scores_5[:5]))
+            ndcg5 = min(1.0, dcg5 / idcg) if idcg > 0 else 0.0
+            metrics["ndcg5_list"].append(ndcg5)
 
             # Answer Relevance: query intent keyword coverage in the answer
             ans_lower = answer_text.lower()
@@ -871,11 +888,16 @@ async def run_comprehensive_100_rag_evaluation():
 
     # 3. Compute Summary Statistics & Statistical Percentiles
     total_eval_time = time.time() - start_all
+    avg_p1 = sum(metrics["p1_list"]) / len(metrics["p1_list"]) if metrics["p1_list"] else 0.0
     avg_p3 = sum(metrics["p3_list"]) / len(metrics["p3_list"]) if metrics["p3_list"] else 0.0
+    avg_p5 = sum(metrics["p5_list"]) / len(metrics["p5_list"]) if metrics["p5_list"] else 0.0
+    avg_r1 = sum(metrics["r1_list"]) / len(metrics["r1_list"]) if metrics["r1_list"] else 0.0
     avg_r3 = sum(metrics["r3_list"]) / len(metrics["r3_list"]) if metrics["r3_list"] else 0.0
-    avg_hit1 = sum(metrics["hit1_list"]) / len(metrics["hit1_list"]) if metrics["hit1_list"] else 0.0
+    avg_r5 = sum(metrics["r5_list"]) / len(metrics["r5_list"]) if metrics["r5_list"] else 0.0
+    avg_hit1 = avg_r1
     avg_mrr = sum(metrics["mrr_list"]) / len(metrics["mrr_list"]) if metrics["mrr_list"] else 0.0
     avg_ndcg3 = sum(metrics["ndcg3_list"]) / len(metrics["ndcg3_list"]) if metrics["ndcg3_list"] else 0.0
+    avg_ndcg5 = sum(metrics["ndcg5_list"]) / len(metrics["ndcg5_list"]) if metrics["ndcg5_list"] else 0.0
     avg_ans_rel = sum(metrics["ans_relevance_list"]) / len(metrics["ans_relevance_list"]) if metrics["ans_relevance_list"] else 0.0
     avg_ctx_rel = sum(metrics["ctx_relevance_list"]) / len(metrics["ctx_relevance_list"]) if metrics["ctx_relevance_list"] else 0.0
     avg_ctx_prec = sum(metrics["ctx_precision_list"]) / len(metrics["ctx_precision_list"]) if metrics["ctx_precision_list"] else 0.0
@@ -929,11 +951,16 @@ async def run_comprehensive_100_rag_evaluation():
         "total_questions": len(questions),
         "execution_duration_seconds": round(total_eval_time, 2),
         "metrics": {
-            "precision_at_3": round(avg_p3, 3),
+            "recall_at_1": round(avg_r1, 3),
             "recall_at_3": round(avg_r3, 3),
+            "recall_at_5": round(avg_r5, 3),
+            "precision_at_1": round(avg_p1, 3),
+            "precision_at_3": round(avg_p3, 3),
+            "precision_at_5": round(avg_p5, 3),
             "hit_at_1": round(avg_hit1, 3),
             "mrr": round(avg_mrr, 3),
             "ndcg_at_3": round(avg_ndcg3, 3),
+            "ndcg_at_5": round(avg_ndcg5, 3),
             "answer_relevance_pct": round(avg_ans_rel * 100, 1),
             "context_relevance_pct": round(avg_ctx_rel * 100, 1),
             "context_precision_pct": round(avg_ctx_prec * 100, 1),
@@ -986,11 +1013,15 @@ async def run_comprehensive_100_rag_evaluation():
     print("EMPIRICAL 100-QUESTION SCIENTIFIC RAG BENCHMARK RESULTS (v2.1):")
     print("=" * 80)
     print(f"  * Total Questions Evaluated:          100")
-    print(f"  * Precision@3 (Answerable):           {avg_p3:.3f}   (Target: >= 0.500)")
+    print(f"  * Recall@1 (Hit@1):                   {avg_r1:.3f}   (Target: >= 0.800)")
     print(f"  * Recall@3 / Hit Rate@3:              {avg_r3:.3f}   (Target: >= 0.900)")
-    print(f"  * Hit@1 (Top-1 Precision):            {avg_hit1:.3f}   (Target: >= 0.800)")
+    print(f"  * Recall@5 / Hit Rate@5:              {avg_r5:.3f}   (Target: >= 0.950)")
+    print(f"  * Precision@1:                        {avg_p1:.3f}   (Target: >= 0.800)")
+    print(f"  * Precision@3 (Answerable):           {avg_p3:.3f}   (Target: >= 0.500)")
+    print(f"  * Precision@5:                        {avg_p5:.3f}   (Target: >= 0.350)")
     print(f"  * Mean Reciprocal Rank (MRR):         {avg_mrr:.3f}   (Target: >= 0.750)")
     print(f"  * Normalized DCG (nDCG@3):            {avg_ndcg3:.3f}   (Target: >= 0.750)")
+    print(f"  * Normalized DCG (nDCG@5):            {avg_ndcg5:.3f}   (Target: >= 0.750)")
     print(f"  * Answer Relevance:                   {avg_ans_rel * 100:.1f}%")
     print(f"  * Context Relevance:                  {avg_ctx_rel * 100:.1f}%")
     print(f"  * Context Noise Ratio:                {avg_ctx_noise * 100:.1f}%")

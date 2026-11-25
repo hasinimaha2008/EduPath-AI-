@@ -488,4 +488,35 @@ async def test_cross_user_chat_history_isolation():
         assert res_rename.status_code == 404
 
 
+@pytest.mark.asyncio
+async def test_liveness_and_subsystem_readiness_probes():
+    """
+    Verify /api/health/live and /api/health/ready probes return appropriate status
+    and detailed diagnostic subsystem breakdown.
+    """
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        # Liveness probe
+        res_live = await ac.get("/api/health/live")
+        assert res_live.status_code == 200
+        live_data = res_live.json()
+        assert live_data.get("status") == "alive"
+        assert "uptime_seconds" in live_data
+
+        # Readiness probe with subsystem telemetry
+        res_ready = await ac.get("/api/health/ready")
+        assert res_ready.status_code == 200
+        ready_data = res_ready.json()
+        assert ready_data.get("status") == "ready"
+        assert ready_data.get("database") == "ready"
+        assert ready_data.get("storage") == "ready"
+        subsystems = ready_data.get("subsystems", {})
+        assert subsystems.get("database") == "ready"
+        assert subsystems.get("storage") == "writable"
+        assert "ai_provider" in subsystems
+        assert "embedding_engine" in subsystems
+        assert "retrieval_system" in subsystems
+        assert subsystems["retrieval_system"].get("mode") == "hybrid_rrf_bm25"
+
+
 

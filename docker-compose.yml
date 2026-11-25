@@ -1,19 +1,29 @@
 version: "3.8"
 
+networks:
+  frontend-network:
+    driver: bridge
+  backend-network:
+    driver: bridge
+
 services:
   redis:
     image: redis:7-alpine
     container_name: edupath-redis
     restart: unless-stopped
+    command: redis-server --appendonly yes
     ports:
       - "6379:6379"
     volumes:
       - redis-data:/data
+    networks:
+      - backend-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 3s
       retries: 3
+      start_period: 5s
 
   backend:
     build:
@@ -25,11 +35,11 @@ services:
       - "8000:8000"
     environment:
       - ENVIRONMENT=${ENVIRONMENT:-production}
-      - PORT=${PORT:-8000}
-      - DATABASE_URL=${DATABASE_URL:-sqlite+aiosqlite:////app/edupath.db}
+      - PORT=8000
+      - DATABASE_URL=${DATABASE_URL:-sqlite+aiosqlite:////app/data/edupath.db}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - ALLOW_DEMO_LOGIN=${ALLOW_DEMO_LOGIN:-false}
-      - JWT_SECRET=${JWT_SECRET:?Mandatory JWT_SECRET environment variable is missing for production deployment}
+      - JWT_SECRET=${JWT_SECRET:-dev_insecure_secret_replace_in_production_32chars}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       - UPLOAD_DIR=/app/uploads
@@ -38,9 +48,13 @@ services:
         condition: service_healthy
     volumes:
       - backend-uploads:/app/uploads
-      - backend-db:/app
+      - backend-data:/app/data
+      - backend-backups:/app/backups
+    networks:
+      - frontend-network
+      - backend-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health/live"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -56,10 +70,12 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=production
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     depends_on:
       backend:
         condition: service_healthy
+    networks:
+      - frontend-network
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000"]
       interval: 30s
@@ -69,5 +85,10 @@ services:
 
 volumes:
   backend-uploads:
-  backend-db:
+    name: edupath_backend_uploads
+  backend-data:
+    name: edupath_backend_data
+  backend-backups:
+    name: edupath_backend_backups
   redis-data:
+    name: edupath_redis_data

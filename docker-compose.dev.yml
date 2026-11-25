@@ -1,0 +1,65 @@
+version: "3.8"
+
+networks:
+  dev-network:
+    driver: bridge
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: edupath-redis-dev
+    restart: "no"
+    ports:
+      - "6379:6379"
+    networks:
+      - dev-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: builder
+    container_name: edupath-backend-dev
+    restart: "no"
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=development
+      - PORT=8000
+      - DATABASE_URL=sqlite+aiosqlite:////app/data/edupath_dev.db
+      - REDIS_URL=redis://redis:6379/0
+      - ALLOW_DEMO_LOGIN=true
+      - JWT_SECRET=local_development_jwt_secret_key_minimum_32_characters_long
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+      - UPLOAD_DIR=/app/uploads
+    volumes:
+      - ./backend:/app
+      - /app/.venv
+      - backend-dev-data:/app/data
+      - backend-dev-uploads:/app/uploads
+    networks:
+      - dev-network
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  frontend:
+    image: node:20-alpine
+    container_name: edupath-frontend-dev
+    working_dir: /app
+    restart: "no"
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    networks:
+      - dev-network
+    command: ["npm", "run", "dev"]
+
+volumes:
+  backend-dev-data:
+  backend-dev-uploads:

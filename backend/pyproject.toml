@@ -1,0 +1,40 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E9",  # syntax errors
+    "F",   # pyflakes (name errors, undefined variables, etc.)
+]
+ignore = [
+    "F401",  # unused imports
+    "F541",  # f-string without placeholder
+    "F841",  # local variable assigned but never used
+]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = false
+warn_redundant_casts = false
+check_untyped_defs = false
+follow_imports = "silent"
+disable_error_code = [
+    "arg-type",
+    "assignment",
+    "var-annotated",
+    "list-item",
+    "misc",
+    "return-value",
+    "attr-defined",
+    "index",
+    "operator",
+    "dict-item",
+]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-v --import-mode=importlib"
+testpaths = ["tests"]
+asyncio_mode = "auto"

@@ -1,0 +1,97 @@
+name: EduPath AI CI
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend-ci:
+    name: Backend CI Suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: "backend/requirements.txt"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install ruff mypy
+
+      - name: Verify Code Compilation & Syntax
+        run: |
+          python -m compileall backend/app/ backend/tests/
+
+      - name: Ruff Code Quality & Lint Verification
+        run: |
+          ruff check backend/app/
+
+      - name: MyPy Static Type Check
+        run: |
+          cd backend && mypy --explicit-package-bases app/core/ app/models/
+
+      - name: Execute Pytest Suite
+        env:
+          JWT_SECRET: "ci_testing_secret_key_minimum_32_characters_strictly_for_ci"
+          DATABASE_URL: "sqlite+aiosqlite:///ci_test.db"
+          ENVIRONMENT: "testing"
+          GEMINI_API_KEY: ""
+        run: |
+          cd backend && pytest -v
+
+      - name: Execute Automated Smoke Test
+        env:
+          JWT_SECRET: "ci_testing_secret_key_minimum_32_characters_strictly_for_ci"
+          DATABASE_URL: "sqlite+aiosqlite:///ci_test_smoke.db"
+        run: |
+          python backend/tests/smoke_test.py
+
+  frontend-ci:
+    name: Frontend CI Suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: "frontend/package-lock.json"
+
+      - name: Install Frontend Dependencies
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: ESLint Code Quality Gate
+        working-directory: ./frontend
+        run: npm run lint
+
+      - name: TypeScript Static Typecheck
+        working-directory: ./frontend
+        run: npx tsc --noEmit
+
+      - name: Production Static Prerendering Build
+        working-directory: ./frontend
+        env:
+          NEXT_TELEMETRY_DISABLED: 1
+          NODE_ENV: production
+        run: npm run build

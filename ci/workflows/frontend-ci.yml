@@ -1,0 +1,59 @@
+name: Frontend CI
+
+on:
+  push:
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-ci.yml"
+      - "ci/**"
+  pull_request:
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-ci.yml"
+      - "ci/**"
+  workflow_dispatch:
+
+concurrency:
+  group: frontend-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  frontend-lint-and-build:
+    name: Frontend Quality & Build Pipeline
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: "frontend/package-lock.json"
+
+      - name: Clean Dependency Installation
+        run: npm ci
+
+      - name: ESLint Quality Gate
+        run: npm run lint
+
+      - name: TypeScript Static Typecheck
+        run: npx tsc --noEmit
+
+      - name: Next.js Production Static Prerendering Build
+        env:
+          NEXT_TELEMETRY_DISABLED: 1
+          NODE_ENV: production
+        run: npm run build
+
+      - name: Dependency Vulnerability Audit
+        run: npm audit --audit-level=high
+        continue-on-error: true

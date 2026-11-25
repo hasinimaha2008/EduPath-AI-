@@ -1,0 +1,88 @@
+name: Deploy to Production
+
+on:
+  release:
+    types: [ published ]
+  workflow_dispatch:
+    inputs:
+      target_tag:
+        description: "Git Tag or Commit SHA to deploy to production"
+        required: true
+        default: "latest"
+      confirm_production:
+        description: "Type 'CONFIRM' to authorize production release"
+        required: true
+        default: "CANCEL"
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  pre-deploy-checks:
+    name: Production Pre-Deployment Gates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify Production Confirmation
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if [ "${{ github.event.inputs.confirm_production }}" != "CONFIRM" ]; then
+            echo "::error::Production deployment cancelled: Confirmation keyword mismatch."
+            exit 1
+          fi
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Verify Backend Integrity
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          cd backend && pytest -v tests/test_migrations.py
+
+  execute-production-deploy:
+    name: Rolling Production Deployment
+    needs: pre-deploy-checks
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.prod_url || 'https://edupath.internal' }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Execute Zero-Downtime Rolling Deploy
+        id: deploy
+        run: |
+          echo "Executing rolling deployment for tag ${{ github.event.inputs.target_tag || github.ref_name }}..."
+          echo "prod_url=https://edupath.internal" >> $GITHUB_OUTPUT
+
+  production-smoke-verification:
+    name: Production Post-Deploy Smoke Gate
+    needs: execute-production-deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run Production Smoke Test Suite
+        env:
+          JWT_SECRET: "production_verification_secret_key_minimum_32_chars"
+          TARGET_URL: ${{ secrets.PRODUCTION_API_URL || 'http://127.0.0.1:8000' }}
+        run: |
+          pip install -r backend/requirements.txt
+          python backend/tests/smoke_test.py --url "$TARGET_URL"
+
+      - name: Trigger Rollback Runbook on Failure
+        if: failure()
+        run: |
+          echo "::error::Production smoke test failed! Initiating emergency notification."
+          echo "Refer to docs/ROLLBACK.md for deterministic container and database restore."

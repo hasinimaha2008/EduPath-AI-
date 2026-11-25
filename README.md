@@ -56,7 +56,9 @@ For deep operational details, deployment guides, security matrices, and incident
 - 🚀 **[CI/CD Pipeline Architecture](docs/CI_CD.md)**: GitHub Actions workflow matrix, quality gates, and local reproduction commands.
 - 🐳 **[Production Deployment Guide](docs/DEPLOYMENT.md)**: Multi-stage Docker builds, Docker Compose orchestration, and environment configuration.
 - 🛡️ **[Security Architecture & Threat Model](docs/SECURITY.md)**: STRIDE analysis, AI prompt injection defense, JWT auth, and tenant isolation.
-- 🔄 **[Rollback & Disaster Recovery](docs/ROLLBACK.md)**: Atomic database restores, container rollback procedures, and SHA256 verification.
+- 🔄 **[Rollback & Container Recovery](docs/ROLLBACK.md)**: Container rollback procedures and state recovery.
+- 💾 **[Database Backup & Restore](docs/BACKUP_RESTORE.md)**: Cryptographic SHA256 sidecars, atomic restore, and corruption mitigation.
+- 🌐 **[Disaster Recovery & Business Continuity](docs/DISASTER_RECOVERY.md)**: RTO/RPO targets, multi-region failover, and automated drills.
 - 🚨 **[Incident Response & Runbooks](docs/INCIDENT_RESPONSE.md)**: SEV-1 to SEV-4 incident triage, MTTR targets, and step-by-step mitigation runbooks.
 - 📈 **[Observability & Monitoring](docs/MONITORING.md)**: Decoupled liveness/readiness probes, structured logging with correlation IDs, and latency percentiles.
 

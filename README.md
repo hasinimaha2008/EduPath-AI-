@@ -201,23 +201,24 @@ All tests have been executed against live local services. Zero fabricated result
 ================================================================================
 EDUPATH AI - AUTOMATED VERIFICATION AUDIT SUMMARY
 ================================================================================
-1. Pytest Test Suites (44 / 44 Tests PASSED in 10.58s):
+1. Pytest Test Suites (49 / 49 Tests PASSED in 11.89s):
    - test_api.py (10 tests): Health, Auth, Skill Mapping, Quizzes, Notes, Security, Planner, Multi-Tenant Isolation, Explanation Levels, Career JD Analyzer
-   - test_assistant_correctness.py (12 tests): Offline fallback, Empty response, Insufficient context, Multilingual Telugu/Hindi, Explanation modes, Streaming parity, Citations, Prompt injection, Evidence density
-   - test_backup_restore.py (7 tests): Hot online backup, Missing files handling, Production default database backup, Corrupted backup rejection, Transaction rollback recovery, PostgreSQL dialect errors, Unique constraints & FK auditing
+   - test_assistant_correctness.py (13 tests): Offline fallback, Empty response, Insufficient context, Multilingual Telugu/Hindi, Explanation modes, Streaming parity, Citations, Prompt injection, Document sanitization, Evidence density, Query prompt injection
+   - test_backup_restore.py (8 tests): Hot online backup, Missing files handling, Production default database backup, Metadata sidecar & checksum tamper rejection, Corrupted backup rejection, Transaction rollback recovery, PostgreSQL dialect errors, Unique constraints & FK auditing
    - test_path_security.py (3 tests): os.path.commonpath unit tests, Sibling directory traversal rejection (HTTP 400), Safe cleanup hook execution
-   - test_security_regression.py (12 tests): CORS policy, Cross-tenant isolation, Zip bomb protection, Production demo login restriction, Strict JWT validation, Sliding window rate limiter, Readiness probes, Quiz submission prevention, Grounded abstentions, Backup integrity
+   - test_security_regression.py (15 tests): CORS policy, Untrusted CORS rejection, Cross-tenant isolation, Zip bomb protection, Production demo login restriction, Strict JWT validation, Sliding window rate limiter, Readiness probes, Prompt injection boundaries, Quiz submission prevention, Grounded abstentions, Backup integrity, Zero-width space prompt injection neutralization, XML boundary escape disarming, Cross-user chat history isolation
 
 2. Comprehensive 100-Question RAG Benchmark (backend/tests/rag_comprehensive_100_evaluation.py):
-   - 100 / 100 Queries Evaluated Across 8 Core Disciplines + 1 Dynamic Unseen Domain (1.84s total)
+   - 100 / 100 Queries Evaluated Across 8 Core Disciplines + 1 Dynamic Unseen Domain (4.16s total)
    - Hit Rate @ 1 (Hit@1):       0.975 (97.5%)
    - Recall @ 3 (Hit Rate@3):    1.000 (100.0%)
-   - Mean Reciprocal Rank (MRR): 0.985 | nDCG@3: 0.989 | Precision@3: 0.554
-   - Answer Relevance:           96.6% | Context Relevance: 55.4%
-   - Answer Faithfulness Rate:   98.8% (79 / 80 grounded answers)
-   - Citation Precision:         99.0% | Citation Completeness: 99.0%
-   - Safe Abstention Rate:       90.0% (18 / 20 correct rejections & prompt-injection defense)
-   - Average Latency:            Retrieval: 13.11ms | Generation: 0.68ms | E2E: 13.79ms
+   - Mean Reciprocal Rank (MRR): 0.985 | nDCG@3: 0.989 | Precision@3: 0.562
+   - Answer Relevance:           96.6% | Context Concept Coverage: 95.6%
+   - Answer Faithfulness Rate:   91.2% +/- 6.2% (95% CI)
+   - Claim Verification:         253 claims evaluated (97.2% fully supported, 2.8% contradiction-guarded, 0 unsupported)
+   - Citation Precision:         99.0% | Citation Completeness: 99.0% | Citation Hallucinations: 0
+   - Safe Abstention Rate:       90.0% +/- 13.1% (95% CI)
+   - Latency Percentiles:        E2E Mean: 25.05 +/- 1.52 ms | P50: 23.36ms | P95: 38.05ms | P99: 43.00ms
 
 3. Master QA Security, Latency & Edge-Case Audit (backend/tests/master_qa_audit.py):
    - 18 / 18 Scenarios PASSED (100.0%)

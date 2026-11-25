@@ -107,31 +107,68 @@ def extract_claims_from_answer(answer_text: str) -> List[str]:
 
     return claims
 
+def detect_claim_contradiction(claim: str, passage: str) -> bool:
+    """
+    Checks if a claim directly contradicts a passage by asserting opposite polarity
+    on shared technical propositions.
+    """
+    negation_patterns = [r"\bnot\b", r"\bnever\b", r"\bcannot\b", r"\bno\b", r"\bdoesn't\b", r"\bfails\b", r"\blacks\b"]
+    affirmation_patterns = [r"\bguarantees\b", r"\benforces\b", r"\bensures\b", r"\balways\b", r"\bmaintains\b", r"\bprovides\b"]
+
+    c_lower = claim.lower()
+    p_lower = passage.lower()
+
+    claim_has_neg = any(re.search(pat, c_lower) for pat in negation_patterns)
+    passage_has_aff = any(re.search(pat, p_lower) for pat in affirmation_patterns)
+
+    c_words = extract_content_words(claim)
+    p_words = extract_content_words(passage)
+    shared = c_words & p_words
+
+    if len(shared) >= 3 and claim_has_neg and passage_has_aff:
+        return True
+    return False
+
 def verify_claim_support(claim: str, context_passages: List[str]) -> Tuple[str, float, Optional[str]]:
     """
-    Evaluates whether a single extracted claim is supported by retrieved context.
-    Returns (verdict: 'fully_supported' | 'partially_supported' | 'unsupported', support_score, matched_passage)
+    Evaluates whether a single extracted claim is supported by retrieved context using
+    combined semantic embedding similarity and lexical proposition grounding, with
+    active contradiction detection.
+    Returns (verdict: 'fully_supported' | 'partially_supported' | 'contradiction' | 'unsupported', support_score, matched_passage)
     """
     claim_words = extract_content_words(claim)
     if not claim_words:
         return "fully_supported", 1.0, None
 
+    claim_vec = gemini_service.embeddings.embed_query(claim)
+
     best_score = 0.0
     best_passage = None
+    has_contradiction = False
 
     for passage in context_passages:
         passage_words = extract_content_words(passage)
         if not passage_words:
             continue
         overlap = len(claim_words & passage_words)
-        score = overlap / len(claim_words)
-        if score > best_score:
-            best_score = score
-            best_passage = passage
+        lexical_score = overlap / len(claim_words)
 
-    if best_score >= 0.55:
+        passage_vec = gemini_service.embeddings.embed_document(passage)
+        semantic_score = max(0.0, cosine_similarity(claim_vec, passage_vec))
+
+        composite_score = round(0.55 * semantic_score + 0.45 * lexical_score, 4)
+
+        if composite_score > best_score:
+            best_score = composite_score
+            best_passage = passage
+            if detect_claim_contradiction(claim, passage):
+                has_contradiction = True
+
+    if has_contradiction and best_score >= 0.40:
+        return "contradiction", best_score, best_passage
+    elif best_score >= 0.45 or (best_score >= 0.35 and len(claim_words & extract_content_words(best_passage or "")) >= 2):
         return "fully_supported", best_score, best_passage
-    elif best_score >= 0.30:
+    elif best_score >= 0.25:
         return "partially_supported", best_score, best_passage
     else:
         return "unsupported", best_score, None
@@ -569,6 +606,7 @@ async def run_comprehensive_100_rag_evaluation():
         "total_claims": 0,
         "fully_supported": 0,
         "partially_supported": 0,
+        "contradictions": 0,
         "unsupported": 0,
         "claim_to_citation_mappings": 0,
         "citation_hallucinations": 0
@@ -745,6 +783,8 @@ async def run_comprehensive_100_rag_evaluation():
                     claim_telemetry["fully_supported"] += 1
                 elif verdict == "partially_supported":
                     claim_telemetry["partially_supported"] += 1
+                elif verdict == "contradiction":
+                    claim_telemetry["contradictions"] += 1
                 else:
                     claim_telemetry["unsupported"] += 1
 
@@ -754,7 +794,8 @@ async def run_comprehensive_100_rag_evaluation():
                             matched_sources.add(r.get("doc_title"))
 
             supported_claims = sum(1 for v in claim_verdicts if v in ("fully_supported", "partially_supported"))
-            is_faithful = (len(claims) == 0) or ((supported_claims / len(claims)) >= 0.70 and matched_query_kw >= 1)
+            contradiction_cnt = sum(1 for v in claim_verdicts if v == "contradiction")
+            is_faithful = (len(claims) == 0) or ((supported_claims / len(claims)) >= 0.70 and matched_query_kw >= 1 and contradiction_cnt == 0)
 
             metrics["faithfulness_total"] += 1
             if is_faithful:
@@ -919,9 +960,11 @@ async def run_comprehensive_100_rag_evaluation():
             "total_claims_evaluated": claim_telemetry["total_claims"],
             "fully_supported_claims": claim_telemetry["fully_supported"],
             "partially_supported_claims": claim_telemetry["partially_supported"],
+            "contradictions_detected": claim_telemetry["contradictions"],
             "unsupported_claims": claim_telemetry["unsupported"],
             "fully_supported_pct": round(claim_telemetry["fully_supported"] / max(claim_telemetry["total_claims"], 1) * 100, 1),
             "partially_supported_pct": round(claim_telemetry["partially_supported"] / max(claim_telemetry["total_claims"], 1) * 100, 1),
+            "contradictions_pct": round(claim_telemetry["contradictions"] / max(claim_telemetry["total_claims"], 1) * 100, 1),
             "unsupported_claims_pct": round(claim_telemetry["unsupported"] / max(claim_telemetry["total_claims"], 1) * 100, 1),
             "claim_to_citation_mappings": claim_telemetry["claim_to_citation_mappings"],
             "citation_hallucinations": claim_telemetry["citation_hallucinations"]

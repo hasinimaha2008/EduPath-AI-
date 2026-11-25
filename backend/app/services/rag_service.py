@@ -148,6 +148,90 @@ class RAGService:
         }
 
     @staticmethod
+    def rewrite_query(query: str) -> str:
+        """
+        Expands technical acronyms and canonical domain aliases to maximize
+        lexical and semantic retrieval recall without distorting student intent.
+        """
+        expansions = {
+            r"\bacid\b": "ACID (Atomicity, Consistency, Isolation, Durability)",
+            r"\b2pc\b": "Two-Phase Commit distributed transaction coordinator",
+            r"\bcfs\b": "Completely Fair Scheduler Linux virtual runtime",
+            r"\bcap\b": "CAP theorem Consistency Availability Partition Tolerance",
+            r"\btlb\b": "Translation Lookaside Buffer MMU page table walk",
+            r"\bb-tree\b": "B-Tree B+ Tree balanced index search",
+            r"\braft\b": "Raft consensus leader election log replication",
+            r"\bosi\b": "OSI 7-layer reference model networking transport",
+            r"\bquic\b": "QUIC HTTP/3 UDP multiplexing 0-RTT",
+            r"\bmmu\b": "Memory Management Unit virtual memory paging"
+        }
+        expanded = query
+        for pattern, replacement in expansions.items():
+            expanded = re.sub(pattern, replacement, expanded, flags=re.IGNORECASE)
+        return expanded
+
+    @staticmethod
+    def deduplicate_chunks(chunks: List[Dict[str, Any]], similarity_threshold: float = 0.85) -> List[Dict[str, Any]]:
+        """
+        Deduplicates retrieved chunks to prevent redundant context from consuming
+        the model's prompt window when overlapping chunks are retrieved.
+        """
+        deduped = []
+        seen_texts = []
+        for c in chunks:
+            content = c.get("content", "").strip()
+            words_c = set(re.findall(r'\b\w{3,}\b', content.lower()))
+            if not words_c:
+                continue
+
+            is_duplicate = False
+            for seen_words in seen_texts:
+                if not seen_words:
+                    continue
+                jaccard = len(words_c & seen_words) / len(words_c | seen_words)
+                if jaccard >= similarity_threshold:
+                    is_duplicate = True
+                    break
+
+            if not is_duplicate:
+                deduped.append(c)
+                seen_texts.append(words_c)
+
+        return deduped
+
+    @staticmethod
+    def compress_context(passages: List[str], query: str, max_sentences: int = 6) -> str:
+        """
+        Extracts the highest-density sentences from retrieved passages matching query intent,
+        minimizing token bloat while strictly preserving complete factual propositions.
+        """
+        q_words = set(re.findall(r'\b\w{3,}\b', query.lower()))
+        scored_sentences = []
+
+        for p_idx, p in enumerate(passages):
+            sentences = re.split(r'(?<=[.!?])\s+', p.strip())
+            for s_idx, s in enumerate(sentences):
+                s_clean = s.strip()
+                if len(s_clean) < 20:
+                    continue
+                s_words = set(re.findall(r'\b\w{3,}\b', s_clean.lower()))
+                overlap = len(q_words & s_words)
+                if overlap > 0:
+                    scored_sentences.append({
+                        "sentence": s_clean,
+                        "score": overlap,
+                        "order": (p_idx, s_idx)
+                    })
+
+        if not scored_sentences:
+            return "\n\n".join(passages[:3])
+
+        scored_sentences.sort(key=lambda x: x["score"], reverse=True)
+        top_sentences = scored_sentences[:max_sentences]
+        top_sentences.sort(key=lambda x: x["order"])
+        return "\n".join(s["sentence"] for s in top_sentences)
+
+    @staticmethod
     async def retrieve_relevant_chunks(
         session: AsyncSession,
         user_id: str,
@@ -164,7 +248,8 @@ class RAGService:
         Enforces user ownership, security boundaries, and citation relevance thresholds.
         Supports cross-document querying when document_id is None.
         """
-        query_vector = gemini_service.embeddings.embed_query(query)
+        expanded_query = RAGService.rewrite_query(query)
+        query_vector = gemini_service.embeddings.embed_query(expanded_query)
 
         # Build query for user documents
         stmt = select(
@@ -252,6 +337,11 @@ class RAGService:
             ]
             if filtered:
                 scored_chunks = filtered
+
+        # Context deduplication to ensure diverse, non-redundant evidence
+        deduped = RAGService.deduplicate_chunks(scored_chunks)
+        if deduped:
+            scored_chunks = deduped
 
         # Sort descending by fused final score
         scored_chunks.sort(key=lambda x: x["score"], reverse=True)

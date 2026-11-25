@@ -51,6 +51,15 @@ ai, rag, retrieval-augmented-generation, fastapi, nextjs, typescript, python, ge
    - Start Command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
    - Environment Variables: `GEMINI_API_KEY`, `JWT_SECRET`, `DATABASE_URL`
 
+### 📚 Enterprise DevOps & Operations Documentation
+For deep operational details, deployment guides, security matrices, and incident runbooks:
+- 🚀 **[CI/CD Pipeline Architecture](docs/CI_CD.md)**: GitHub Actions workflow matrix, quality gates, and local reproduction commands.
+- 🐳 **[Production Deployment Guide](docs/DEPLOYMENT.md)**: Multi-stage Docker builds, Docker Compose orchestration, and environment configuration.
+- 🛡️ **[Security Architecture & Threat Model](docs/SECURITY.md)**: STRIDE analysis, AI prompt injection defense, JWT auth, and tenant isolation.
+- 🔄 **[Rollback & Disaster Recovery](docs/ROLLBACK.md)**: Atomic database restores, container rollback procedures, and SHA256 verification.
+- 🚨 **[Incident Response & Runbooks](docs/INCIDENT_RESPONSE.md)**: SEV-1 to SEV-4 incident triage, MTTR targets, and step-by-step mitigation runbooks.
+- 📈 **[Observability & Monitoring](docs/MONITORING.md)**: Decoupled liveness/readiness probes, structured logging with correlation IDs, and latency percentiles.
+
 ---
 
 ## 📸 Application Visual Showcase

@@ -1,0 +1,162 @@
+name: Continuous Deployment (Staging & Production)
+
+on:
+  push:
+    branches: [ master, main ]
+  workflow_dispatch:
+    inputs:
+      target_env:
+        description: 'Deployment target environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      run_migrations:
+        description: 'Execute database migrations (alembic upgrade head)'
+        required: true
+        default: true
+        type: boolean
+
+concurrency:
+  group: deploy-${{ github.ref }}-${{ inputs.target_env || 'production' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  pre-deploy-validation:
+    name: Pre-Deployment Validation & Build Sanity
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Validate Backend Syntax & Compile
+        working-directory: ./backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python -m compileall app/ tests/
+
+      - name: Set up Node.js 20 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Validate Frontend Static Prerendering
+        working-directory: ./frontend
+        env:
+          NEXT_PUBLIC_API_URL: "http://127.0.0.1:8000"
+        run: |
+          npm ci
+          npm run build
+
+  deploy-staging:
+    name: Deploy to Staging Environment
+    needs: pre-deploy-validation
+    if: github.ref == 'refs/heads/master' || inputs.target_env == 'staging'
+    environment:
+      name: staging
+      url: https://staging.edupath.internal
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      ENVIRONMENT: "staging"
+      DATABASE_URL: "sqlite+aiosqlite:///./staging.db"
+      JWT_SECRET: "staging-jwt-secret-secure-random-32-chars-long"
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Runtime Requirements
+        working-directory: ./backend
+        run: |
+          pip install -r requirements.txt
+
+      - name: Execute Database Migrations (Zero-Downtime)
+        working-directory: ./backend
+        run: |
+          alembic upgrade head
+
+      - name: Execute Automated Post-Deployment Smoke Tests
+        working-directory: ./backend
+        run: |
+          python tests/smoke_test.py
+
+  deploy-production:
+    name: Deploy to Production Environment
+    needs: [pre-deploy-validation]
+    if: github.ref == 'refs/heads/main' || inputs.target_env == 'production'
+    environment:
+      name: production
+      url: https://app.edupath.ai
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      ENVIRONMENT: "production"
+      DATABASE_URL: "sqlite+aiosqlite:///./production.db"
+      JWT_SECRET: "production-jwt-secret-secure-random-32-chars-long"
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Runtime Requirements
+        working-directory: ./backend
+        run: |
+          pip install -r requirements.txt
+
+      - name: Execute Database Migrations (Zero-Downtime)
+        working-directory: ./backend
+        run: |
+          alembic upgrade head
+
+      - name: Execute Automated Post-Deployment Smoke Tests
+        working-directory: ./backend
+        run: |
+          python tests/smoke_test.py
+
+      - name: Health Probe Verification
+        working-directory: ./backend
+        run: |
+          python -c "
+          import asyncio
+          from app.main import app
+          from httpx import AsyncClient, ASGITransport
+          async def verify():
+              transport = ASGITransport(app=app)
+              async with AsyncClient(transport=transport, base_url='http://test') as c:
+                  r = await c.get('/api/health/ready')
+                  assert r.status_code == 200, f'Readiness failed: {r.status_code}'
+                  assert r.json()['status'] == 'ready'
+                  print('Production readiness probe verified successfully.')
+          asyncio.run(verify())
+          "

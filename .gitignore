@@ -21,6 +21,12 @@ backend/*/*/*/__pycache__/
 backend/*.pyc
 backend/.pytest_cache/
 .pytest_cache/
+.coverage
+.coverage.*
+backend/.coverage
+backend/.coverage.*
+htmlcov/
+coverage.xml
 *.db
 backend/*.db
 backend/uploads/

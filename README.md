@@ -53,14 +53,18 @@ ai, rag, retrieval-augmented-generation, fastapi, nextjs, typescript, python, ge
 
 ### 📚 Enterprise DevOps & Operations Documentation
 For deep operational details, deployment guides, security matrices, and incident runbooks:
+- 🗺️ **[DevOps & Architecture Overview](docs/DEVOPS_OVERVIEW.md)**: System topology, workflow map, and environment architectures.
 - 🚀 **[CI/CD Pipeline Architecture](docs/CI_CD.md)**: GitHub Actions workflow matrix, quality gates, and local reproduction commands.
 - 🐳 **[Production Deployment Guide](docs/DEPLOYMENT.md)**: Multi-stage Docker builds, Docker Compose orchestration, and environment configuration.
+- 🧪 **[Staging Operations & Verification](docs/STAGING.md)**: Staging pipeline, pre-deploy checks, and automated smoke testing.
+- 🏭 **[Production Operations & CD](docs/PRODUCTION.md)**: Manual approval gates, rolling updates, and zero-downtime procedures.
 - 🛡️ **[Security Architecture & Threat Model](docs/SECURITY.md)**: STRIDE analysis, AI prompt injection defense, JWT auth, and tenant isolation.
-- 🔄 **[Rollback & Container Recovery](docs/ROLLBACK.md)**: Container rollback procedures and state recovery.
-- 💾 **[Database Backup & Restore](docs/BACKUP_RESTORE.md)**: Cryptographic SHA256 sidecars, atomic restore, and corruption mitigation.
-- 🌐 **[Disaster Recovery & Business Continuity](docs/DISASTER_RECOVERY.md)**: RTO/RPO targets, multi-region failover, and automated drills.
+- 🗄️ **[Database Migration Safety](docs/DATABASE_MIGRATIONS.md)**: Alembic schema evolution, expand-contract pattern, and migration test suite.
+- 💾 **[Backup & Recovery Architecture](docs/BACKUP_AND_RECOVERY.md)**: Cryptographic SHA256 sidecars, atomic restore, and corruption mitigation.
+- 🔄 **[Rollback Runbook](docs/ROLLBACK.md)**: Emergency rollback procedures, container reversion, and state recovery.
 - 🚨 **[Incident Response & Runbooks](docs/INCIDENT_RESPONSE.md)**: SEV-1 to SEV-4 incident triage, MTTR targets, and step-by-step mitigation runbooks.
 - 📈 **[Observability & Monitoring](docs/MONITORING.md)**: Decoupled liveness/readiness probes, structured logging with correlation IDs, and latency percentiles.
+- 🔧 **[SRE Troubleshooting Guide](docs/TROUBLESHOOTING.md)**: Root-cause diagnosis, error codes, and operational recovery runbooks.
 
 ---
 

@@ -16,10 +16,8 @@ Write-Host "Step 3: Staging .github/workflows and committing..." -ForegroundColo
 git add .github/ .gitignore
 git commit -m "ci: activate .github/workflows on GitHub Actions"
 
-Write-Host "Step 4: Pushing workflows to GitHub remotes..." -ForegroundColor Green
+Write-Host "Step 4: Pushing workflows to origin master..." -ForegroundColor Green
 git push origin master
-git push origin master:main
-git push origin master:upgrade/production-release
 
 Write-Host "`n============================================================" -ForegroundColor Cyan
 Write-Host "[SUCCESS] GitHub Actions workflows successfully activated!" -ForegroundColor Green

@@ -67,6 +67,46 @@ EXPLANATION_LEVEL_PROMPTS = {
         "EXPLANATION LEVEL: REAL-WORLD PRODUCTION SOFTWARE ENGINEERING\n"
         "- Ground the explanation in production distributed systems and enterprise industry environments.\n"
         "- Discuss real architectures (e.g. Netflix, Stripe, Google, AWS), cost trade-offs, observability/telemetry, and disaster recovery."
+    ),
+    "interview": (
+        "EXPLANATION LEVEL: TECHNICAL INTERVIEW ANSWER\n"
+        "- Structure like a principal engineer answering a FAANG / top-tier interview question:\n"
+        "  1. High-level elevator pitch definition (in 2 clear sentences)\n"
+        "  2. Core operational mechanism and architecture\n"
+        "  3. Key trade-offs & design decisions (Space vs Time, Latency vs Consistency)\n"
+        "  4. Real-world edge cases & failure recovery\n"
+        "  5. Likely interviewer follow-up questions with recommended answers."
+    ),
+    "code_based": (
+        "EXPLANATION LEVEL: CODE-FIRST PRACTICAL IMPLEMENTATION\n"
+        "- Prioritize clean, production-grade, annotated code snippets with idiomatic conventions.\n"
+        "- Include: 1. Complete minimal runnable code block with syntax tag (e.g. ```python, ```typescript, ```sql, ```cpp)\n"
+        "  2. Line-by-line mechanical explanation of how the code works\n"
+        "  3. Asymptotic Time & Auxiliary Space Complexity analysis\n"
+        "  4. Critical edge cases (empty input, null pointers, off-by-one, overflow)."
+    ),
+    "step_by_step": (
+        "EXPLANATION LEVEL: STEP-BY-STEP PROBLEM SOLVING\n"
+        "- Break down the problem systematically into numbered, progressive steps:\n"
+        "  * Step 1: Clarifying requirements and identifying prerequisites / constraints\n"
+        "  * Step 2: Formulating the conceptual intuition or algorithmic strategy\n"
+        "  * Step 3: Detailed walkthrough of each transformation or calculation step\n"
+        "  * Step 4: Verification and correctness validation."
+    ),
+    "short": (
+        "EXPLANATION LEVEL: CONCISE SHORT SUMMARY\n"
+        "- Deliver an extremely tight, high-density 2 to 3 sentence answer.\n"
+        "- Zero boilerplate, zero pleasantries, pure conceptual signal with maximum clarity."
+    ),
+    "simple": (
+        "EXPLANATION LEVEL: SIMPLE / BEGINNER INTUITION\n"
+        "- Clear, accessible vocabulary, intuitive analogies, and zero unnecessary jargon.\n"
+        "- Explain what it is, why it exists, and how it works in everyday language."
+    ),
+    "detailed": (
+        "EXPLANATION LEVEL: COMPREHENSIVE DEEP-DIVE\n"
+        "- Provide exhaustive, academically rigorous coverage of the subject.\n"
+        "- Detail theoretical underpinnings, mathematical formalisms, system dynamics, and architectural implications."
     )
 }
 

@@ -183,6 +183,36 @@ async def test_explanation_modes_formatting(assistant):
         )
         assert "Exam" in exam_res["answer"]
 
+        # 4. Interview Mode
+        interview_res = await assistant.ask_sync(
+            question="How does a B-Tree index work?",
+            explanation_level="interview"
+        )
+        assert "Interview" in interview_res["answer"]
+
+        # 5. Code-Based Mode
+        code_res = await assistant.ask_sync(
+            question="Implement binary search in Python",
+            explanation_level="code_based"
+        )
+        assert "Code" in code_res["answer"]
+
+        # 6. Step-by-Step Mode
+        step_res = await assistant.ask_sync(
+            question="How does Dijkstra's algorithm work?",
+            explanation_level="step_by_step"
+        )
+        assert "Step-by-Step" in step_res["answer"]
+
+        # 7. Multi-Turn History Summarization
+        long_history = [
+            {"role": "user" if i % 2 == 0 else "assistant", "content": f"Message turn {i}"}
+            for i in range(14)
+        ]
+        prompt = assistant._build_prompt("Follow-up inquiry", None, long_history, "intermediate", "en")
+        assert "PRIOR TOPICS DISCUSSED" in prompt
+        assert "Message turn 13" in prompt
+
 
 @pytest.mark.asyncio
 async def test_streaming_fallback_parity(assistant):

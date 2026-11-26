@@ -164,3 +164,33 @@ async def test_delete_endpoint_does_not_remove_sibling_file():
             assert os.path.exists(sibling_file) is True
             with open(sibling_file, "r") as f:
                 assert f.read() == "must remain safe"
+
+
+@pytest.mark.asyncio
+async def test_empty_file_upload_rejected():
+    """
+    Ensures that /api/documents/upload immediately rejects 0-byte empty file uploads with HTTP 400.
+    """
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        user_id = "test-empty-upload-user"
+        token = create_access_token(subject=user_id)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        async with AsyncSessionLocal() as session:
+            existing = await session.get(User, user_id)
+            if not existing:
+                u = User(
+                    id=user_id,
+                    email="empty_up@example.com",
+                    full_name="Empty Upload Tester",
+                    hashed_password="testhash"
+                )
+                session.add(u)
+                await session.commit()
+
+        # Attempt to upload 0-byte text file
+        empty_files = {"file": ("empty.txt", b"", "text/plain")}
+        resp = await client.post("/api/documents/upload", headers=headers, files=empty_files)
+        assert resp.status_code == 400
+        assert "empty file" in resp.json()["detail"].lower()

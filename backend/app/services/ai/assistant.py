@@ -337,8 +337,28 @@ class AssistantService:
         explanation_level: str,
         language: str
     ) -> str:
+        lvl_key = explanation_level.lower().strip()
+        lvl_alias_map = {
+            "simple": "simple",
+            "beginner": "beginner",
+            "detailed": "detailed",
+            "intermediate": "intermediate",
+            "advanced": "advanced",
+            "interview": "interview",
+            "interview_prep": "interview",
+            "code_based": "code_based",
+            "coding": "code_based",
+            "code": "code_based",
+            "step_by_step": "step_by_step",
+            "short": "short",
+            "exam": "exam_oriented",
+            "exam_oriented": "exam_oriented",
+            "real_world": "real_world",
+            "eli5": "eli5"
+        }
+        mapped_key = lvl_alias_map.get(lvl_key, lvl_key)
         level_instruction = EXPLANATION_LEVEL_PROMPTS.get(
-            explanation_level.lower(),
+            mapped_key,
             EXPLANATION_LEVEL_PROMPTS["intermediate"]
         )
 
@@ -349,13 +369,28 @@ class AssistantService:
 
         history_block = ""
         if conversation_history:
-            recent = conversation_history[-10:]
-            history_lines = []
-            for msg in recent:
-                role = "Student" if msg.get("role") == "user" else "Assistant"
-                content = msg.get("content", "").strip()
-                history_lines.append(f"{role}: {content}")
-            history_block = "PRIOR CONVERSATION CONTEXT:\n" + "\n".join(history_lines) + "\n\n"
+            if len(conversation_history) > 10:
+                earlier = conversation_history[:-8]
+                recent = conversation_history[-8:]
+                earlier_topics = [
+                    m.get("content", "").strip()[:80]
+                    for m in earlier
+                    if m.get("role") == "user" and m.get("content")
+                ]
+                summary_line = f"PRIOR TOPICS DISCUSSED: {'; '.join(earlier_topics[-4:])}\n" if earlier_topics else ""
+                recent_lines = []
+                for msg in recent:
+                    role = "Student" if msg.get("role") == "user" else "Assistant"
+                    content = msg.get("content", "").strip()
+                    recent_lines.append(f"{role}: {content}")
+                history_block = "PRIOR CONVERSATION CONTEXT:\n" + summary_line + "\n".join(recent_lines) + "\n\n"
+            else:
+                history_lines = []
+                for msg in conversation_history[-10:]:
+                    role = "Student" if msg.get("role") == "user" else "Assistant"
+                    content = msg.get("content", "").strip()
+                    history_lines.append(f"{role}: {content}")
+                history_block = "PRIOR CONVERSATION CONTEXT:\n" + "\n".join(history_lines) + "\n\n"
 
         context_block = ""
         if context and context.strip():
@@ -482,7 +517,7 @@ class AssistantService:
             )
             return adv_msg, []
 
-        elif lvl == "exam_oriented":
+        elif lvl in ("exam_oriented", "exam"):
             exam_msg = (
                 f"### AI Study Assistant (Offline Fallback — Exam-Oriented Mode)\n\n"
                 f"The AI reasoning engine is currently running in offline mode because an active AI provider "
@@ -493,6 +528,51 @@ class AssistantService:
                 f"please configure a valid `GEMINI_API_KEY` in your environment settings.*"
             )
             return exam_msg, []
+
+        elif lvl in ("interview", "interview_prep"):
+            interview_msg = (
+                f"### AI Study Assistant (Offline Fallback — Technical Interview Mode)\n\n"
+                f"The AI reasoning engine is currently running in offline mode because an active AI provider "
+                f"(such as Google Gemini) is not configured or reached.\n\n"
+                f"- **Interview Question**: *{q_clean}*\n"
+                f"- **Target**: FAANG-Style Technical Breakdown (Elevator Pitch, Architecture, Trade-Offs, Edge Cases)\n\n"
+                f"*To unlock real-time contextual interview simulations and interactive mock technical questions, "
+                f"please configure a valid `GEMINI_API_KEY` in your environment settings.*"
+            )
+            return interview_msg, []
+
+        elif lvl in ("code_based", "coding", "code"):
+            code_msg = (
+                f"### AI Study Assistant (Offline Fallback — Code-First Mode)\n\n"
+                f"The AI reasoning engine is currently running in offline mode because an active AI provider "
+                f"(such as Google Gemini) is not configured or reached.\n\n"
+                f"- **Programming Task**: *{q_clean}*\n"
+                f"- **Target**: Production-Ready Implementations with Complexity Bounds & Edge Case Handlers\n\n"
+                f"*To generate live verified code blocks with line-by-line mechanical annotations, "
+                f"please configure a valid `GEMINI_API_KEY` in your environment settings.*"
+            )
+            return code_msg, []
+
+        elif lvl == "step_by_step":
+            step_msg = (
+                f"### AI Study Assistant (Offline Fallback — Step-by-Step Problem Solving)\n\n"
+                f"The AI reasoning engine is currently running in offline mode because an active AI provider "
+                f"(such as Google Gemini) is not configured or reached.\n\n"
+                f"- **Problem Inquiry**: *{q_clean}*\n"
+                f"- **Target**: Numbered Progressive Walkthrough from Foundational Intuition to Solution\n\n"
+                f"*To receive live step-by-step algorithmic guidance, "
+                f"please configure a valid `GEMINI_API_KEY` in your environment settings.*"
+            )
+            return step_msg, []
+
+        elif lvl == "short":
+            short_msg = (
+                f"### AI Study Assistant (Offline Fallback — Concise Mode)\n\n"
+                f"The AI reasoning engine is in offline mode (no active AI provider connected).\n\n"
+                f"- **Query**: *{q_clean}*\n"
+                f"- **Status**: Configure `GEMINI_API_KEY` in environment settings to receive immediate live short answers."
+            )
+            return short_msg, []
 
         else:
             default_msg = (

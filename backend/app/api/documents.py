@@ -66,12 +66,23 @@ async def upload_document(
                     detail=f"File exceeds maximum allowed size of {settings.MAX_UPLOAD_SIZE_BYTES // (1024*1024)}MB."
                 )
             buffer.write(chunk)
+
+    if bytes_read == 0:
+        if os.path.exists(saved_path):
+            os.remove(saved_path)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot upload an empty file (0 bytes)."
+        )
+
     # Validate file signature (magic bytes) to prevent extension spoofing
     def validate_magic_bytes(fpath: str, file_ext: str) -> bool:
         try:
             with open(fpath, "rb") as f:
                 header = f.read(512)
             logger.info(f"Magic bytes check: ext={file_ext}, len={len(header)}, header_start={header[:10]}")
+            if len(header) == 0:
+                return False
             if file_ext == ".pdf":
                 return header.startswith(b"%PDF")
             elif file_ext in (".docx", ".pptx"):

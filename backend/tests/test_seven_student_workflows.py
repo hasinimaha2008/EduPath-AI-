@@ -301,3 +301,71 @@ async def test_workflow_7_user_isolation():
         # User B attempts to delete Alice's note -> MUST BE REJECTED (404)
         leak_del = await client.delete(f"/api/notes/{note_a_id}", headers=headers_b)
         assert leak_del.status_code == 404, "Cross-user note deletion was not blocked!"
+
+
+@pytest.mark.asyncio
+async def test_workflow_8_logout_login_persistence():
+    """Workflow 8: Logout -> Login again -> Verify persisted data."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        uid = uuid.uuid4().hex[:8]
+        email = f"wf8_student_{uid}@example.com"
+        password = "PersistentPass123!"
+        full_name = "Persistent Scholar"
+
+        # 1. Register & Initial Login
+        reg_res = await client.post("/api/auth/register", json={
+            "email": email,
+            "password": password,
+            "full_name": full_name
+        })
+        assert reg_res.status_code == 200
+        user_id = reg_res.json()["user"]["id"]
+
+        login_res1 = await client.post("/api/auth/login", json={"email": email, "password": password})
+        assert login_res1.status_code == 200
+        token1 = login_res1.json()["access_token"]
+        headers1 = {"Authorization": f"Bearer {token1}"}
+
+        # 2. Create User Content
+        note_res = await client.post("/api/notes", json={
+            "title": "Persistent Architecture Study Note",
+            "content_markdown": "Key invariants of persistent database systems.",
+            "note_type": "detailed"
+        }, headers=headers1)
+        assert note_res.status_code == 200
+        created_note_id = note_res.json()["id"]
+
+        plan_res = await client.post("/api/study-planner/generate", json={
+            "title": "Persistent Preparation Plan",
+            "daily_hours_target": 2.0,
+            "days_duration": 5
+        }, headers=headers1)
+        assert plan_res.status_code == 200
+
+        # 3. Terminate Session / Logout (Client drops token)
+        # Verify that unauthenticated requests to protected endpoints fail
+        unauth = await client.get("/api/auth/me")
+        assert unauth.status_code in (401, 403)
+
+        # 4. Login Again with Credentials
+        login_res2 = await client.post("/api/auth/login", json={"email": email, "password": password})
+        assert login_res2.status_code == 200
+        token2 = login_res2.json()["access_token"]
+        headers2 = {"Authorization": f"Bearer {token2}"}
+
+        # 5. Verify All Persisted Data Remains Accessible
+        me_res = await client.get("/api/auth/me", headers=headers2)
+        assert me_res.status_code == 200
+        assert me_res.json()["id"] == user_id
+        assert me_res.json()["email"] == email
+        assert me_res.json()["full_name"] == full_name
+
+        persisted_note = await client.get(f"/api/notes/{created_note_id}", headers=headers2)
+        assert persisted_note.status_code == 200
+        assert persisted_note.json()["title"] == "Persistent Architecture Study Note"
+
+        persisted_notes_list = await client.get("/api/notes", headers=headers2)
+        assert persisted_notes_list.status_code == 200
+        assert any(n["id"] == created_note_id for n in persisted_notes_list.json())
+

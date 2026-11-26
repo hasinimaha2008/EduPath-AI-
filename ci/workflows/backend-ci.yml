@@ -54,7 +54,7 @@ jobs:
       - name: MyPy Type Gate
         run: mypy --explicit-package-bases app/core/ app/models/
 
-      - name: Run Pytest Suite with Coverage (All 66 Tests)
+      - name: Run Pytest Suite with Coverage (All 70 Tests)
         env:
           JWT_SECRET: "ci_testing_secret_key_minimum_32_characters_strictly_for_ci"
           DATABASE_URL: "sqlite+aiosqlite:///ci_pytest.db"

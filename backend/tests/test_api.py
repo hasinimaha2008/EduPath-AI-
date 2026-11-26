@@ -321,3 +321,134 @@ async def test_career_jd_skill_analyzer():
         assert isinstance(data["recommended_bridge_projects"], list)
         assert len(data["summary_analysis"]) > 20
 
+@pytest.mark.asyncio
+async def test_invalid_credentials_and_token_expiration():
+    """Verify that wrong password, unknown user, and expired JWT are properly rejected."""
+    import uuid
+    from datetime import timedelta
+    from app.core.security import create_access_token
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        uid = uuid.uuid4().hex[:8]
+        email = f"auth_edge_{uid}@example.com"
+        password = "SecurePassword123!"
+
+        reg_res = await ac.post("/api/auth/register", json={
+            "email": email,
+            "password": password,
+            "full_name": "Auth Edge Tester"
+        })
+        assert reg_res.status_code == 200
+        user_id = reg_res.json()["user"]["id"]
+
+        # 1. Incorrect password rejected with 401
+        wrong_pw_res = await ac.post("/api/auth/login", json={
+            "email": email,
+            "password": "WrongPassword999!"
+        })
+        assert wrong_pw_res.status_code == 401
+        assert "Invalid email or password" in wrong_pw_res.json()["detail"]
+
+        # 2. Non-existent user rejected with 401
+        ghost_res = await ac.post("/api/auth/login", json={
+            "email": f"ghost_{uid}@example.com",
+            "password": password
+        })
+        assert ghost_res.status_code == 401
+        assert "Invalid email or password" in ghost_res.json()["detail"]
+
+        # 3. Expired JWT token rejected with 401
+        expired_token = create_access_token(user_id, expires_delta=timedelta(seconds=-30))
+        expired_res = await ac.get("/api/auth/me", headers={"Authorization": f"Bearer {expired_token}"})
+        assert expired_res.status_code == 401
+
+@pytest.mark.asyncio
+async def test_oversized_file_upload_rejection():
+    """Verify that file uploads exceeding MAX_UPLOAD_SIZE_BYTES return 413."""
+    from app.core.config import settings
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        login_res = await ac.get("/api/auth/demo-login")
+        token = login_res.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Exceed configured ceiling by 1 KB
+        oversized_content = b"%PDF-1.7\n" + (b"X" * (settings.MAX_UPLOAD_SIZE_BYTES + 1024))
+        files = {"file": ("oversized_document.pdf", oversized_content, "application/pdf")}
+
+        res = await ac.post("/api/documents/upload", files=files, headers=headers)
+        assert res.status_code == 413
+        assert "File exceeds maximum allowed size" in res.json()["detail"]
+
+@pytest.mark.asyncio
+async def test_chat_history_lifecycle_and_deletion():
+    """Verify conversation creation, retrieval, and cascading deletion in chat history."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        login_res = await ac.get("/api/auth/demo-login")
+        token = login_res.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # 1. Create a new conversation
+        create_res = await ac.post("/api/chat-history", json={
+            "title": "Data Structures Comprehensive Q&A"
+        }, headers=headers)
+        assert create_res.status_code == 200
+        conv_id = create_res.json()["id"]
+
+        # 2. List conversations and verify presence
+        list_res = await ac.get("/api/chat-history", headers=headers)
+        assert list_res.status_code == 200
+        assert any(c["id"] == conv_id for c in list_res.json())
+
+        # 3. Fetch single conversation detail
+        detail_res = await ac.get(f"/api/chat-history/{conv_id}", headers=headers)
+        assert detail_res.status_code == 200
+        assert detail_res.json()["title"] == "Data Structures Comprehensive Q&A"
+
+        # 4. Delete conversation
+        del_res = await ac.delete(f"/api/chat-history/{conv_id}", headers=headers)
+        assert del_res.status_code == 200
+        assert "deleted successfully" in del_res.json()["message"]
+
+        # 5. Subsequent retrieval returns 404
+        post_del = await ac.get(f"/api/chat-history/{conv_id}", headers=headers)
+        assert post_del.status_code == 404
+
+@pytest.mark.asyncio
+async def test_voice_agent_endpoints():
+    """Verify voice agent languages, voice persona catalogs, and conversational voice turn."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        # Languages catalog
+        lang_res = await ac.get("/api/voice/languages")
+        assert lang_res.status_code == 200
+        languages = lang_res.json()
+        assert len(languages) >= 10
+        codes = [l["code"] for l in languages]
+        assert "en" in codes
+        assert "hi" in codes
+        assert "te" in codes
+
+        # Voices catalog
+        voices_res = await ac.get("/api/voice/voices")
+        assert voices_res.status_code == 200
+        assert len(voices_res.json()) > 0
+
+        # Voice Chat endpoint with authentication
+        login_res = await ac.get("/api/auth/demo-login")
+        token = login_res.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        chat_res = await ac.post("/api/voice/chat", json={
+            "message": "Explain what a binary search tree is in simple terms.",
+            "language": "en",
+            "synthesize_audio": False
+        }, headers=headers)
+        assert chat_res.status_code == 200
+        chat_data = chat_res.json()
+        assert len(chat_data["reply_text"]) > 20
+        assert "conversation_id" in chat_data
+

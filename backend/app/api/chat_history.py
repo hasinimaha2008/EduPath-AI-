@@ -14,6 +14,36 @@ from app.schemas.schemas import (
 
 router = APIRouter(prefix="/chat-history", tags=["AI Chat History"])
 
+@router.post("", response_model=ConversationResponse)
+async def create_conversation(
+    conv_in: ConversationCreate,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db)
+):
+    """
+    Creates a new conversational thread for the authenticated user.
+    """
+    title = (conv_in.title or "Academic Consultation").strip()
+    conv = Conversation(
+        title=title,
+        user_id=current_user.id,
+        subject_id=conv_in.subject_id,
+        document_id=conv_in.document_id
+    )
+    session.add(conv)
+    await session.commit()
+    await session.refresh(conv)
+
+    return ConversationResponse(
+        id=conv.id,
+        title=conv.title,
+        subject_id=conv.subject_id,
+        document_id=conv.document_id,
+        created_at=conv.created_at,
+        updated_at=conv.updated_at,
+        messages=[]
+    )
+
 @router.get("", response_model=List[ConversationResponse])
 async def list_conversations(
     current_user: User = Depends(get_current_user),

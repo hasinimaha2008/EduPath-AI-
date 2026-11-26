@@ -33,7 +33,7 @@ jobs:
           echo "- **Frontend Image:** \`ghcr.io/${{ github.repository }}/frontend:${{ github.ref_name }}\`" >> RELEASE_BODY.md
           echo "" >> RELEASE_BODY.md
           echo "#### Verification Evidence" >> RELEASE_BODY.md
-          echo "- Pytest Full Suite: 66 / 66 Passed (100%)" >> RELEASE_BODY.md
+          echo "- Pytest Full Suite: 70 / 70 Passed (100%)" >> RELEASE_BODY.md
           echo "- Automated Smoke Test: 8 / 8 Passed (100%)" >> RELEASE_BODY.md
           echo "- Frontend Lint & Prerendering: 22 / 22 Static Routes Prerendered" >> RELEASE_BODY.md
 

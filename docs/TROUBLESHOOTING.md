@@ -23,10 +23,18 @@ flowchart TD
 
 ### 2.1 GitHub Error: GH013 (OAuth App Lacks Workflow Scope)
 - **Symptom**: `! [remote rejected] ... (refusing to allow an OAuth App to create or update workflow without workflow scope)`.
-- **Root Cause**: The active GitHub Personal Access Token lacks administrative `workflow` permission.
-- **Resolution**:
-  1. Navigate to **GitHub > Settings > Developer Settings > Personal Access Tokens**.
-  2. Select your active token, check the **`workflow`** scope checkbox, and save.
+- **Root Cause**: The active GitHub Personal Access Token or OAuth CLI credential lacks administrative `workflow` permission required by GitHub to write into `.github/workflows/`.
+- **Resolution (Method 1 — GitHub CLI in 10 seconds)**:
+  ```powershell
+  # Run in terminal to refresh scopes and authorize workflow permissions via browser
+  gh auth refresh -s workflow
+  
+  # Then push workflows to remote
+  git push origin master
+  ```
+- **Resolution (Method 2 — Personal Access Token UI)**:
+  1. Navigate to **GitHub > Settings > Developer Settings > Personal Access Tokens (Classic)**.
+  2. Select your active token, check the **`workflow`** scope checkbox, and click **Update token**.
   3. Re-run `git push origin master`.
 
 ---

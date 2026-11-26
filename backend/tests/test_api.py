@@ -363,6 +363,24 @@ async def test_invalid_credentials_and_token_expiration():
         expired_res = await ac.get("/api/auth/me", headers={"Authorization": f"Bearer {expired_token}"})
         assert expired_res.status_code == 401
 
+        # 4. Duplicate email registration rejected with 400
+        dup_res = await ac.post("/api/auth/register", json={
+            "email": email,
+            "password": password,
+            "full_name": "Duplicate Tester"
+        })
+        assert dup_res.status_code == 400
+        assert "already exists" in dup_res.json()["detail"]
+
+        # 5. Weak password policy rejection with 400 (lacks uppercase and numbers)
+        weak_res = await ac.post("/api/auth/register", json={
+            "email": f"weak_{uid}@example.com",
+            "password": "lowercaseonly",
+            "full_name": "Weak Tester"
+        })
+        assert weak_res.status_code == 400
+        assert "Password must contain" in weak_res.json()["detail"]
+
 @pytest.mark.asyncio
 async def test_oversized_file_upload_rejection():
     """Verify that file uploads exceeding MAX_UPLOAD_SIZE_BYTES return 413."""

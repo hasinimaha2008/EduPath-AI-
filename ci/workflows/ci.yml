@@ -67,9 +67,11 @@ jobs:
         run: |
           python backend/tests/smoke_test.py
 
-      - name: Backend Dependency Vulnerability Audit
+      - name: Backend Dependency Vulnerability Audit (Strict Gate)
+        # Documented exceptions: PYSEC-2026-4298 and PYSEC-2026-1325 (python-jose / ecdsa).
+        # EduPath AI enforces HS256 HMAC-SHA256 exclusively; asymmetric ECDSA routines are deactivated.
         run: |
-          pip-audit -r backend/requirements.txt || true
+          pip-audit -r backend/requirements.txt --ignore-vuln PYSEC-2026-4298 --ignore-vuln PYSEC-2026-1325
 
       - name: Upload Backend Coverage Report
         uses: actions/upload-artifact@v4
@@ -116,9 +118,9 @@ jobs:
           NODE_ENV: production
         run: npm run build
 
-      - name: Frontend Dependency Vulnerability Audit
+      - name: Frontend Dependency Vulnerability Audit (Strict Gate)
         working-directory: ./frontend
-        run: npm audit --audit-level=high || true
+        run: node scripts/audit_check.mjs
 
   infrastructure-ci:
     name: Infrastructure & Container Validation
@@ -139,8 +141,8 @@ jobs:
 
       - name: Validate Backend Dockerfile
         run: |
-          docker build --check -f backend/Dockerfile backend/ || true
+          docker build --check -f backend/Dockerfile backend/
 
       - name: Validate Frontend Dockerfile
         run: |
-          docker build --check -f frontend/Dockerfile frontend/ || true
+          docker build --check -f frontend/Dockerfile frontend/

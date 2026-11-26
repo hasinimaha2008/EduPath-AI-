@@ -1,15 +1,17 @@
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.database import get_db
 from app.core.config import settings
 from app.core.security import (
     verify_password, get_password_hash, create_access_token,
-    validate_password_strength, check_auth_rate_limit
+    validate_password_strength, check_auth_rate_limit, revoke_token
 )
 from app.models.models import User
 from app.schemas.schemas import UserCreate, UserLogin, UserResponse, TokenResponse
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, security_scheme
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -100,3 +102,19 @@ async def demo_login(session: AsyncSession = Depends(get_db)):
 @router.get("/me", response_model=UserResponse)
 async def get_me(current_user: User = Depends(get_current_user)):
     return UserResponse.model_validate(current_user)
+
+@router.post("/logout")
+async def logout_user(
+    auth_creds: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Terminates user session and revokes the active JWT access token.
+    Future requests with this token will be rejected with 401 Unauthorized.
+    """
+    if auth_creds and auth_creds.credentials:
+        revoke_token(auth_creds.credentials)
+    return {
+        "message": "Successfully logged out. Session terminated.",
+        "user_id": current_user.id
+    }

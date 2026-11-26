@@ -343,18 +343,30 @@ async def test_workflow_8_logout_login_persistence():
         }, headers=headers1)
         assert plan_res.status_code == 200
 
-        # 3. Terminate Session / Logout (Client drops token)
-        # Verify that unauthenticated requests to protected endpoints fail
+        # 3. Call Server-Side Logout Endpoint to Invalidate Active Session
+        logout_res = await client.post("/api/auth/logout", headers=headers1)
+        assert logout_res.status_code == 200
+        assert "Session terminated" in logout_res.json()["message"]
+
+        # 4. Verify Cryptographic Invalidation: The Revoked Token CANNOT Access Protected Endpoints
+        revoked_me = await client.get("/api/auth/me", headers=headers1)
+        assert revoked_me.status_code == 401, "Revoked JWT was incorrectly accepted on /api/auth/me!"
+
+        revoked_notes = await client.get("/api/notes", headers=headers1)
+        assert revoked_notes.status_code == 401, "Revoked JWT was incorrectly accepted on /api/notes!"
+
+        # Unauthenticated request without headers also rejected
         unauth = await client.get("/api/auth/me")
         assert unauth.status_code in (401, 403)
 
-        # 4. Login Again with Credentials
+        # 5. Login Again with Credentials to Generate Fresh Session
         login_res2 = await client.post("/api/auth/login", json={"email": email, "password": password})
         assert login_res2.status_code == 200
         token2 = login_res2.json()["access_token"]
+        assert token2 != token1, "New login must issue a distinct, non-revoked token"
         headers2 = {"Authorization": f"Bearer {token2}"}
 
-        # 5. Verify All Persisted Data Remains Accessible
+        # 6. Verify All Persisted Data Remains Intact and Accessible under Fresh Session
         me_res = await client.get("/api/auth/me", headers=headers2)
         assert me_res.status_code == 200
         assert me_res.json()["id"] == user_id

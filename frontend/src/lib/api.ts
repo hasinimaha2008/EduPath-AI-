@@ -130,6 +130,20 @@ class ApiClient {
     return this.request<User>("/api/auth/me");
   }
 
+  async logout(): Promise<{ message: string }> {
+    try {
+      const res = await this.request<{ message: string }>("/api/auth/logout", {
+        method: "POST",
+      });
+      return res;
+    } catch (err) {
+      console.warn("Logout request error:", err);
+      return { message: "Local session cleared." };
+    } finally {
+      this.clearAuth();
+    }
+  }
+
   // Documents
   async uploadDocument(file: File, title?: string, subjectId?: string): Promise<DocumentItem> {
     const formData = new FormData();

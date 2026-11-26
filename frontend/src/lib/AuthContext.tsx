@@ -58,10 +58,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
-  const logout = () => {
-    api.clearAuth();
-    setUser(null);
-    router.push("/login");
+  const logout = async () => {
+    try {
+      await api.logout();
+    } catch (err) {
+      console.warn("Logout error:", err);
+    } finally {
+      api.clearAuth();
+      setUser(null);
+      router.push("/login");
+    }
   };
 
   return (

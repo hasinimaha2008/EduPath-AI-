@@ -34,8 +34,19 @@ env:
   IMAGE_PREFIX: ${{ github.repository }}
 
 jobs:
+  validate-compose:
+    name: Validate Docker Compose Configuration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Validate Compose Config
+        run: docker compose config
+
   build-and-publish:
     name: Build & Publish Container Images
+    needs: validate-compose
     runs-on: ubuntu-latest
     strategy:
       fail-fast: true
@@ -81,7 +92,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: ./${{ matrix.service }}
-          file: ./${{ matrix.service }}//Dockerfile
+          file: ./${{ matrix.service }}/Dockerfile
           push: ${{ steps.flags.outputs.push }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

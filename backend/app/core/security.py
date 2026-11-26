@@ -171,12 +171,70 @@ def create_access_token(subject: str | Any, expires_delta: Optional[timedelta] =
         "exp": expire,
         "sub": str(subject),
         "iat": datetime.now(timezone.utc),
-        "iss": "edupath-ai-auth"
+        "iss": "edupath-ai-auth",
+        "jti": secrets.token_hex(16)
     }
     encoded_jwt = jwt.encode(to_encode, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
     return encoded_jwt
 
+# In-memory token revocation cache (stored by raw token string or jti)
+_revoked_tokens: set = set()
+
+def revoke_token(token: str) -> None:
+    """
+    Revokes an issued JWT access token upon logout to invalidate the session.
+    Records both the raw token string and the cryptographic jti claim.
+    """
+    if not token or not isinstance(token, str):
+        return
+    token_str = token.strip()
+    _revoked_tokens.add(token_str)
+
+    jti = None
+    try:
+        unverified_payload = jwt.decode(
+            token_str,
+            settings.JWT_SECRET,
+            algorithms=[settings.JWT_ALGORITHM],
+            options={"verify_exp": False, "verify_iss": False, "verify_signature": False}
+        )
+        jti = unverified_payload.get("jti")
+        if jti:
+            _revoked_tokens.add(str(jti))
+    except Exception:
+        pass
+
+    # If Redis is active, replicate revocation across distributed cluster
+    try:
+        redis_conn = auth_rate_limiter._get_redis()
+        if redis_conn:
+            ttl_seconds = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+            redis_conn.setex(f"revoked_token:{token_str}", ttl_seconds, "1")
+            if jti:
+                redis_conn.setex(f"revoked_token:{jti}", ttl_seconds, "1")
+    except Exception as e:
+        logger.warning(f"Failed to record token revocation in Redis: {e}")
+
+def is_token_revoked(token_or_jti: str) -> bool:
+    """
+    Checks if a JWT access token or its jti has been explicitly invalidated / revoked.
+    """
+    if not token_or_jti or not isinstance(token_or_jti, str):
+        return False
+    val_str = token_or_jti.strip()
+    if val_str in _revoked_tokens:
+        return True
+    try:
+        redis_conn = auth_rate_limiter._get_redis()
+        if redis_conn:
+            return bool(redis_conn.exists(f"revoked_token:{val_str}"))
+    except Exception:
+        pass
+    return False
+
 def decode_access_token(token: str) -> Optional[str]:
+    if is_token_revoked(token):
+        return None
     try:
         payload = jwt.decode(
             token,
@@ -185,6 +243,9 @@ def decode_access_token(token: str) -> Optional[str]:
             options={"verify_exp": True, "verify_iss": True},
             issuer="edupath-ai-auth"
         )
+        jti = payload.get("jti")
+        if jti and is_token_revoked(str(jti)):
+            return None
         user_id = payload.get("sub")
         if not user_id or not str(user_id).strip():
             return None

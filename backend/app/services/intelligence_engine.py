@@ -162,7 +162,36 @@ class EduPathIntelligenceEngine:
                 pts = round(float(q.points) * score_ratio, 1)
                 fb = f"{eval_res.get('feedback', '')} | Reference Key: {q.explanation}"
             else:
-                is_correct = (user_resp.lower() == q.correct_answer.strip().lower())
+                user_clean = user_resp.strip().lower()
+                corr_clean = q.correct_answer.strip().lower()
+                is_correct = (user_clean == corr_clean)
+
+                if not is_correct and q.options_json:
+                    try:
+                        opts = json.loads(q.options_json)
+                        if isinstance(opts, list) and len(opts) > 0:
+                            strip_pfx = lambda s: re.sub(r'^(?:[a-d1-4][\.\)]\s*|option\s+[a-d1-4]:?\s*|\([a-d1-4]\)\s*)', '', s.strip().lower())
+                            user_stripped = strip_pfx(user_clean)
+                            corr_stripped = strip_pfx(corr_clean)
+
+                            if user_stripped and user_stripped == corr_stripped:
+                                is_correct = True
+                            else:
+                                letter_map = {"a": 0, "b": 1, "c": 2, "d": 3, "1": 0, "2": 1, "3": 2, "4": 3}
+                                u_match = re.match(r'^(?:option\s+)?([a-d1-4])(?:\)|:|\.|$)', user_clean)
+                                c_match = re.match(r'^(?:option\s+)?([a-d1-4])(?:\)|:|\.|$)', corr_clean)
+                                u_idx = letter_map.get(u_match.group(1)) if u_match else None
+                                c_idx = letter_map.get(c_match.group(1)) if c_match else None
+
+                                if u_idx is not None and u_idx < len(opts) and strip_pfx(str(opts[u_idx])) == corr_stripped:
+                                    is_correct = True
+                                elif not is_correct and c_idx is not None and c_idx < len(opts) and user_stripped == strip_pfx(str(opts[c_idx])):
+                                    is_correct = True
+                                elif not is_correct and u_idx is not None and c_idx is not None and u_idx == c_idx:
+                                    is_correct = True
+                    except Exception:
+                        pass
+
                 pts = float(q.points) if is_correct else 0.0
                 fb = q.explanation
 

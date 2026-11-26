@@ -1,6 +1,6 @@
 # EduPath AI — 1-Click GitHub Actions Workflow Activator
 # This script refreshes GitHub CLI scopes to include 'workflow',
-# unignores .github/, and pushes all 9 CI/CD workflows to GitHub.
+# unignores .github/, and pushes all authoritative CI/CD workflows and Dependabot to GitHub.
 
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host "EDUPATH AI - GITHUB ACTIONS WORKFLOW ACTIVATOR" -ForegroundColor Cyan
@@ -12,9 +12,9 @@ gh auth refresh -s workflow
 Write-Host "`nStep 2: Activating .github/ directory in git..." -ForegroundColor Green
 (Get-Content .gitignore) | Where-Object { $_ -notmatch '^\.github/' -and $_ -notmatch 'GitHub Workflows local' } | Set-Content .gitignore
 
-Write-Host "Step 3: Staging .github/workflows and committing..." -ForegroundColor Green
+Write-Host "Step 3: Staging .github/ and committing..." -ForegroundColor Green
 git add .github/ .gitignore
-git commit -m "ci: activate .github/workflows on GitHub Actions"
+git commit -m "ci: activate .github/workflows and dependabot on GitHub Actions"
 
 Write-Host "Step 4: Pushing workflows to origin master..." -ForegroundColor Green
 git push origin master

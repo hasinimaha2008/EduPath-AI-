@@ -33,7 +33,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
-          pip install ruff mypy pytest-cov
+          pip install ruff mypy pytest-cov pip-audit
 
       - name: Verify Code Compilation & Syntax
         run: |
@@ -47,7 +47,11 @@ jobs:
         run: |
           cd backend && mypy --explicit-package-bases app/core/ app/models/
 
-      - name: Execute Pytest Suite with Coverage
+      - name: Validate Alembic Migrations
+        run: |
+          cd backend && python -m alembic check
+
+      - name: Execute Pytest Suite with Coverage (All 70 Tests)
         env:
           JWT_SECRET: "ci_testing_secret_key_minimum_32_characters_strictly_for_ci"
           DATABASE_URL: "sqlite+aiosqlite:///ci_test.db"
@@ -56,12 +60,16 @@ jobs:
         run: |
           cd backend && pytest -v --cov=app --cov-report=xml:coverage.xml --cov-report=term-missing
 
-      - name: Execute Automated Smoke Test
+      - name: Execute Automated Smoke Test Probe
         env:
           JWT_SECRET: "ci_testing_secret_key_minimum_32_characters_strictly_for_ci"
           DATABASE_URL: "sqlite+aiosqlite:///ci_test_smoke.db"
         run: |
           python backend/tests/smoke_test.py
+
+      - name: Backend Dependency Vulnerability Audit
+        run: |
+          pip-audit -r backend/requirements.txt || true
 
       - name: Upload Backend Coverage Report
         uses: actions/upload-artifact@v4
@@ -108,12 +116,31 @@ jobs:
           NODE_ENV: production
         run: npm run build
 
-  docker-validation:
-    name: Docker & Compose Validation
+      - name: Frontend Dependency Vulnerability Audit
+        working-directory: ./frontend
+        run: npm audit --audit-level=high || true
+
+  infrastructure-ci:
+    name: Infrastructure & Container Validation
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Validate Docker Compose Configuration
-        run: docker compose config
+      - name: Validate Docker Compose Configurations
+        env:
+          REDIS_PASSWORD: "ci_dummy_password"
+          DATABASE_URL: "postgresql+asyncpg://ci:ci@localhost:5432/ci"
+          JWT_SECRET: "ci_dummy_secret_32_characters_long_min"
+          ALLOWED_ORIGINS: "http://localhost:3000"
+        run: |
+          docker compose -f docker-compose.yml config
+          docker compose -f docker-compose.prod.yml config
+
+      - name: Validate Backend Dockerfile
+        run: |
+          docker build --check -f backend/Dockerfile backend/ || true
+
+      - name: Validate Frontend Dockerfile
+        run: |
+          docker build --check -f frontend/Dockerfile frontend/ || true

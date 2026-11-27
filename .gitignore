@@ -50,5 +50,3 @@ scratch/
 .DS_Store
 Thumbs.db
 
-# GitHub Workflows local mirror (avoids GH013 permission error when pushing with token lacking workflow scope)
-.github/

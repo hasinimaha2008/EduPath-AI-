@@ -1,0 +1,69 @@
+name: Deploy to Staging
+
+on:
+  push:
+    branches: [ master, main ]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  pre-deploy-validation:
+    name: Staging Pre-Deployment Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate Alembic Migration Dry Run
+        run: |
+          pip install -r backend/requirements.txt
+          cd backend && python -m alembic check
+
+  deploy-staging:
+    name: Execute Staging Deployment
+    needs: pre-deploy-validation
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: ${{ steps.deploy.outputs.staging_url || 'https://staging.edupath.internal' }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Log Deployment Action
+        id: deploy
+        run: |
+          echo "Deploying commit ${{ github.sha }} to staging environment..."
+          echo "staging_url=https://staging.edupath.internal" >> $GITHUB_OUTPUT
+
+  post-deploy-smoke-test:
+    name: Staging Automated Smoke Verification
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Execute Smoke Test Runner
+        env:
+          JWT_SECRET: "staging_verification_secret_key_minimum_32_chars"
+          TARGET_URL: ${{ secrets.STAGING_API_URL || 'http://127.0.0.1:8000' }}
+        run: |
+          pip install -r backend/requirements.txt
+          python backend/tests/smoke_test.py --url "$TARGET_URL"

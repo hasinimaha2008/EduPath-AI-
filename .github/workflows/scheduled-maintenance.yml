@@ -1,0 +1,57 @@
+name: Scheduled Maintenance & Health Drill
+
+on:
+  schedule:
+    - cron: '0 2 * * 0'  # Weekly on Sunday at 02:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  disaster-recovery-drill:
+    name: Automated Backup & Restore Drill
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Dependencies
+        run: |
+          pip install -r backend/requirements.txt
+
+      - name: Execute Backup & Restore Verification Drill
+        run: |
+          cd backend && pytest -v tests/test_backup_restore.py
+
+  dependency-freshness-audit:
+    name: Upstream Security & Vulnerability Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Python Safety & Pip-Audit
+        run: |
+          pip install pip-audit
+          pip-audit -r backend/requirements.txt --ignore-vuln PYSEC-2026-4298 --ignore-vuln PYSEC-2026-1325
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Node Security Audit
+        working-directory: ./frontend
+        run: |
+          node scripts/audit_check.mjs

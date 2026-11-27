@@ -48,8 +48,12 @@ jobs:
           cd backend && mypy --explicit-package-bases app/core/ app/models/
 
       - name: Validate Alembic Migrations
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///ci_alembic_validation.db"
         run: |
-          cd backend && python -m alembic check
+          cd backend
+          python -m alembic upgrade head
+          python -m alembic check
 
       - name: Execute Pytest Suite with Coverage (All 70 Tests)
         env:
@@ -80,6 +84,7 @@ jobs:
           name: backend-coverage-report
           path: backend/coverage.xml
           retention-days: 7
+          if-no-files-found: ignore
 
   frontend-ci:
     name: Frontend CI Suite
@@ -135,6 +140,7 @@ jobs:
           DATABASE_URL: "postgresql+asyncpg://ci:ci@localhost:5432/ci"
           JWT_SECRET: "ci_dummy_secret_32_characters_long_min"
           ALLOWED_ORIGINS: "http://localhost:3000"
+          NEXT_PUBLIC_API_URL: "https://example.invalid"
         run: |
           docker compose -f docker-compose.yml config
           docker compose -f docker-compose.prod.yml config

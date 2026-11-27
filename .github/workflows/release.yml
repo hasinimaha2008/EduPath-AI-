@@ -38,7 +38,7 @@ jobs:
           echo "- Frontend Lint & Prerendering: 22 / 22 Static Routes Prerendered" >> RELEASE_BODY.md
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           body_path: RELEASE_BODY.md
           draft: false

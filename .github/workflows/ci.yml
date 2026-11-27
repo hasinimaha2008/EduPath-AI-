@@ -62,14 +62,22 @@ jobs:
           ENVIRONMENT: "testing"
           GEMINI_API_KEY: ""
         run: |
-          cd backend && pytest -v --cov=app --cov-report=xml:coverage.xml --cov-report=term-missing
+          cd backend
+          python -m alembic upgrade head
+          python -m app.core.init_db
+          pytest -v --cov=app --cov-report=xml:coverage.xml --cov-report=term-missing
 
       - name: Execute Automated Smoke Test Probe
         env:
           JWT_SECRET: "ci_testing_secret_key_minimum_32_characters_strictly_for_ci"
           DATABASE_URL: "sqlite+aiosqlite:///ci_test_smoke.db"
+          ENVIRONMENT: "testing"
+          GEMINI_API_KEY: ""
         run: |
-          python backend/tests/smoke_test.py
+          cd backend
+          python -m alembic upgrade head
+          python -m app.core.init_db
+          python tests/smoke_test.py
 
       - name: Backend Dependency Vulnerability Audit (Strict Gate)
         # Documented exceptions: PYSEC-2026-4298 and PYSEC-2026-1325 (python-jose / ecdsa).

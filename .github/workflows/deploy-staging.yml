@@ -26,9 +26,13 @@ jobs:
           python-version: "3.11"
 
       - name: Validate Alembic Migration Dry Run
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///ci_staging_validation.db"
         run: |
           pip install -r backend/requirements.txt
-          cd backend && python -m alembic check
+          cd backend
+          python -m alembic upgrade head
+          python -m alembic check
 
   deploy-staging:
     name: Execute Staging Deployment
